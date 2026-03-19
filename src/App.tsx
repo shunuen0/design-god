@@ -1,11 +1,13 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, ArrowUp, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
 import { Streamdown } from "streamdown";
-import godLogo from "./god.png";
+import { Sidebar } from "./Sidebar";
+import { SkillsPanel } from "./SkillsPanel";
 import type { ChatMessage, GalleryItem, ToolCallItem } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787/api/chat";
 const PREVIEW_URL = API_URL.replace(/\/api\/chat$/, "/api/preview");
+const END_SESSION_URL = API_URL.replace(/\/api\/chat$/, "/api/chat/session/end");
 
 function fileToDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -317,13 +319,25 @@ export function App() {
     try { return JSON.parse(localStorage.getItem("design-god-gallery") ?? "[]"); } catch { return []; }
   });
   const [showGallery, setShowGallery] = useState(false);
+  const [showSkills, setShowSkills] = useState(false);
   const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+
+  const activePanel = showSkills ? "skills" : showGallery ? "gallery" : null;
 
   useEffect(() => {
     localStorage.setItem("design-god-gallery", JSON.stringify(galleryItems));
   }, [galleryItems]);
 
   const canSend = useMemo(() => draft.trim().length > 0 || imageDataUrls.length > 0, [draft, imageDataUrls]);
+
+  function endChatSession(sessionId: string, reason: string) {
+    void fetch(END_SESSION_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId, reason }),
+      keepalive: true
+    }).catch(() => {});
+  }
 
   function applyMultiLine(value: boolean) {
     clearTimeout(collapseTimerRef.current);
@@ -357,6 +371,7 @@ export function App() {
   }
 
   function startNewChat() {
+    endChatSession(sessionId, "new_chat");
     setMessages([]);
     setDraft("");
     setImageDataUrls([]);
@@ -562,72 +577,68 @@ export function App() {
     </form>
   );
 
-  const header = (
-    <header className="app-header">
-      <img src={godLogo} alt="Design God" className="app-logo" role="button" tabIndex={0} onClick={startNewChat} onKeyDown={(e) => e.key === "Enter" && startNewChat()} />
-      <div className="header-actions">
-        <button
-          type="button"
-          className="gallery-toggle-button"
-          onClick={() => setShowGallery((v) => !v)}
-          title="Gallery"
-        >
-          <Images size={18} strokeWidth={1.75} />
-        </button>
-        <button
-          type="button"
-          className="new-chat-button"
-          onClick={startNewChat}
-          title="New chat"
-        >
-          <Plus size={18} strokeWidth={1.75} />
-        </button>
-      </div>
-    </header>
+  const sidebar = (
+    <Sidebar
+      activePanel={activePanel}
+      onNewChat={startNewChat}
+      onToggleGallery={() => { setShowGallery(v => !v); setShowSkills(false); }}
+      onToggleSkills={() => { setShowSkills(v => !v); setShowGallery(false); }}
+    />
   );
 
-  const galleryPanel = showGallery && (
-    <GalleryPanel
-      items={galleryItems}
-      onAdd={addGalleryItem}
-      onRemove={removeGalleryItem}
-      onClose={() => setShowGallery(false)}
-    />
+  const panels = (
+    <>
+      {showGallery && (
+        <GalleryPanel
+          items={galleryItems}
+          onAdd={addGalleryItem}
+          onRemove={removeGalleryItem}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
+      {showSkills && (
+        <SkillsPanel onClose={() => setShowSkills(false)} />
+      )}
+    </>
   );
 
   if (isEmpty) {
     return (
-      <div className="app-shell empty">
-        {header}
-        <div className="empty-center">
-          <h1 className="empty-heading">Ask Design God anything</h1>
-          {composerForm}
+      <div className="app-root">
+        {sidebar}
+        <div className="app-shell empty">
+          <div className="empty-center">
+            <h1 className="empty-heading">Ask Design God anything</h1>
+            {composerForm}
+          </div>
         </div>
-        {galleryPanel}
+        {panels}
       </div>
     );
   }
 
   return (
-    <div className="app-shell">
-      {header}
-      <div className="thread">
-        {messages.map((message) => (
-          <MessageCard key={message.id} message={message} />
-        ))}
-        {streamingPhase && !streamingText && (
-          <ThinkingIndicator phase={streamingPhase} toolCalls={toolCalls} />
-        )}
-        {streamingText && (
-          <article className="message-card assistant">
-            <Streamdown mode="streaming" animated caret="block">
-              {streamingText}
-            </Streamdown>
-          </article>
-        )}
+    <div className="app-root">
+      {sidebar}
+      <div className="app-shell">
+        <div className="thread">
+          {messages.map((message) => (
+            <MessageCard key={message.id} message={message} />
+          ))}
+          {streamingPhase && !streamingText && (
+            <ThinkingIndicator phase={streamingPhase} toolCalls={toolCalls} />
+          )}
+          {streamingText && (
+            <article className="message-card assistant">
+              <Streamdown mode="streaming" animated caret="block">
+                {streamingText}
+              </Streamdown>
+            </article>
+          )}
+        </div>
+        {composerForm}
       </div>
-      {composerForm}
-      {galleryPanel}
+      {panels}
     </div>
   );
 }

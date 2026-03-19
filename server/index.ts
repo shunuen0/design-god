@@ -1,9 +1,9 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
-import { Tracer } from "judgeval";
-import { context, trace, type Context, type Span } from "@opentelemetry/api";
+import { ROOT_CONTEXT, SpanStatusCode, trace, type Context, type Span } from "@opentelemetry/api";
+import { query, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
+import { JudgmentTracerProvider, Tracer } from "judgeval";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
@@ -11,39 +11,14 @@ import fs from "node:fs";
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
 const claudeHome = path.join(process.cwd(), ".claude-home");
+const judgmentProjectName = "design-god";
+const chatSessionTimeoutMs = Number(process.env.DESIGN_GOD_SESSION_TIMEOUT_MS ?? 30 * 60 * 1000);
+let judgmentTracer: Tracer | null = null;
 
 fs.mkdirSync(claudeHome, { recursive: true });
 
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
-
-const CONV_TTL_MS = 30 * 60 * 1000;
-
-const conversationTraces = new Map<string, { ctx: Context; span: Span; lastActivity: number }>();
-
-function getOrCreateConversationCtx(sessionId: string): Context {
-  const now = Date.now();
-
-  // Prune stale sessions
-  for (const [id, entry] of conversationTraces) {
-    if (now - entry.lastActivity > CONV_TTL_MS) {
-      entry.span.end();
-      conversationTraces.delete(id);
-    }
-  }
-
-  const existing = conversationTraces.get(sessionId);
-  if (existing) {
-    existing.lastActivity = now;
-    return existing.ctx;
-  }
-
-  const tracer = trace.getTracer("design-god");
-  const span = tracer.startSpan("conversation");
-  const ctx = trace.setSpan(context.active(), span);
-  conversationTraces.set(sessionId, { ctx, span, lastActivity: now });
-  return ctx;
-}
 
 const requestSchema = z.object({
   messages: z.array(
@@ -57,6 +32,26 @@ const requestSchema = z.object({
   ),
   sessionId: z.string().optional()
 });
+
+const endSessionSchema = z.object({
+  sessionId: z.string(),
+  reason: z.string().optional()
+});
+
+type ChatTraceSession = {
+  sessionId: string;
+  rootSpan: Span;
+  rootContext: Context;
+  createdAt: string;
+  createdAtMs: number;
+  lastActivityAt: number;
+  lastUserText: string;
+  lastMessageCount: number;
+  turnCount: number;
+  timeoutHandle?: ReturnType<typeof setTimeout>;
+};
+
+const chatTraceSessions = new Map<string, ChatTraceSession>();
 
 const systemPrompt = `You are Design God, a multimodal design partner.
 
@@ -96,6 +91,29 @@ function toPrompt(messages: z.infer<typeof requestSchema>["messages"]) {
     .join("\n\n");
 }
 
+function buildConversationMessages(messages: z.infer<typeof requestSchema>["messages"]) {
+  return messages.map((message) => ({
+    role: message.role,
+    content: message.text,
+    created_at: message.createdAt,
+    images:
+      message.imageDataUrls?.map(() => ({
+        type: "image",
+      })) ?? [],
+  }));
+}
+
+function buildAssistantMessage(text: string, toolCalls: Array<{ name?: string; input?: unknown }>) {
+  return {
+    role: "assistant",
+    content: text,
+    tool_calls: toolCalls.map((toolCall) => ({
+      name: toolCall.name,
+      input: toolCall.input,
+    })),
+  };
+}
+
 function extractText(messages: SDKMessage[]) {
   const parts: string[] = [];
   for (const msg of messages) {
@@ -124,13 +142,247 @@ function extractToolResultText(content: unknown): string {
   return String(content ?? "");
 }
 
+function pickPrimaryModel(result: SDKResultMessage): string | undefined {
+  const rankedModels = Object.entries(result.modelUsage ?? {}).sort(([, left], [, right]) => {
+    const leftWeight = left.inputTokens + left.outputTokens;
+    const rightWeight = right.inputTokens + right.outputTokens;
+    return rightWeight - leftWeight;
+  });
+
+  return rankedModels[0]?.[0];
+}
+
+function recordRunMetadata(result: SDKResultMessage) {
+  Tracer.recordLLMMetadata({
+    provider: "anthropic",
+    model: pickPrimaryModel(result),
+    non_cached_input_tokens: result.usage.input_tokens,
+    output_tokens: result.usage.output_tokens,
+    cache_read_input_tokens: result.usage.cache_read_input_tokens ?? undefined,
+    cache_creation_input_tokens: result.usage.cache_creation_input_tokens ?? undefined,
+    total_cost_usd: result.total_cost_usd,
+  });
+
+  Tracer.setAttributes({
+    duration_ms: result.duration_ms,
+    duration_api_ms: result.duration_api_ms,
+    num_turns: result.num_turns,
+    result_subtype: result.subtype,
+    is_error: result.is_error,
+    model_count: Object.keys(result.modelUsage ?? {}).length,
+    models_used: Object.keys(result.modelUsage ?? {}),
+    permission_denials: result.permission_denials.length,
+  });
+}
+
+function annotateCurrentSpanError(error: unknown, extras?: Record<string, unknown>) {
+  const span = Tracer.getCurrentSpan();
+  if (!span?.isRecording()) return;
+
+  if (extras) {
+    Tracer.setAttributes(extras);
+  }
+
+  if (error instanceof Error) {
+    span.recordException(error);
+    span.setStatus({ code: SpanStatusCode.ERROR, message: error.message });
+    return;
+  }
+
+  const message = String(error);
+  span.recordException(new Error(message));
+  span.setStatus({ code: SpanStatusCode.ERROR, message });
+}
+
+function serializeForSpan(value: unknown) {
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function setSpanAttribute(span: Span, key: string, value: unknown) {
+  if (value == null) return;
+  span.setAttribute(key, serializeForSpan(value));
+}
+
+function setSpanAttributes(span: Span, attributes: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(attributes)) {
+    setSpanAttribute(span, key, value);
+  }
+}
+
+function setSessionSpanMetadata(session: ChatTraceSession, input?: unknown, output?: unknown, extras?: Record<string, unknown>) {
+  setSpanAttribute(session.rootSpan, "judgment.span_kind", "function");
+  setSpanAttribute(session.rootSpan, "judgment.session_id", session.sessionId);
+  setSpanAttribute(session.rootSpan, "chat_session_id", session.sessionId);
+  if (input !== undefined) setSpanAttribute(session.rootSpan, "judgment.input", input);
+  if (output !== undefined) setSpanAttribute(session.rootSpan, "judgment.output", output);
+  if (extras) setSpanAttributes(session.rootSpan, extras);
+}
+
+function runWithSessionSpan<T>(session: ChatTraceSession, fn: () => T): T {
+  return JudgmentTracerProvider.getInstance().useSpan(session.rootSpan, false, true, true, fn);
+}
+
+function emitSessionPartial(session: ChatTraceSession) {
+  if (!judgmentTracer) return;
+  runWithSessionSpan(session, () => {
+    judgmentTracer?.getSpanProcessor().emitPartial();
+  });
+}
+
+function scheduleSessionExpiry(session: ChatTraceSession) {
+  if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+  session.timeoutHandle = setTimeout(() => {
+    void closeChatTraceSession(session.sessionId, "inactive_timeout");
+  }, chatSessionTimeoutMs);
+}
+
+function createChatTraceSession(sessionId: string, userText: string, messageCount: number): ChatTraceSession {
+  const rootSpan = Tracer.getOTELTracer().startSpan("run_session");
+  const createdAt = new Date().toISOString();
+  const session: ChatTraceSession = {
+    sessionId,
+    rootSpan,
+    rootContext: trace.setSpan(ROOT_CONTEXT, rootSpan),
+    createdAt,
+    createdAtMs: Date.now(),
+    lastActivityAt: Date.now(),
+    lastUserText: userText,
+    lastMessageCount: messageCount,
+    turnCount: 0
+  };
+
+  setSessionSpanMetadata(
+    session,
+    {
+      session_id: sessionId,
+      started_at: createdAt,
+      initial_user_text: userText,
+      initial_message_count: messageCount
+    },
+    undefined,
+    {
+      chat_session_id: sessionId,
+      session_status: "active",
+      turn_count: 0,
+      message_count: messageCount,
+      started_at: createdAt
+    }
+  );
+
+  chatTraceSessions.set(sessionId, session);
+  emitSessionPartial(session);
+  scheduleSessionExpiry(session);
+  return session;
+}
+
+function getOrCreateChatTraceSession(sessionId: string, userText: string, messageCount: number) {
+  const existing = chatTraceSessions.get(sessionId);
+  if (existing) return existing;
+  return createChatTraceSession(sessionId, userText, messageCount);
+}
+
+function beginChatTraceTurn(session: ChatTraceSession, userText: string, messageCount: number, hasImages: boolean) {
+  session.lastActivityAt = Date.now();
+  session.lastUserText = userText;
+  session.lastMessageCount = messageCount;
+  session.turnCount += 1;
+  scheduleSessionExpiry(session);
+
+  setSessionSpanMetadata(session, undefined, undefined, {
+      chat_session_id: session.sessionId,
+      session_status: "active",
+      turn_count: session.turnCount,
+      message_count: messageCount,
+      last_activity_at: new Date(session.lastActivityAt).toISOString(),
+      last_user_text: userText,
+      last_turn_has_images: hasImages
+  });
+  emitSessionPartial(session);
+
+  return session.turnCount;
+}
+
+function updateSessionConversationSnapshot(
+  session: ChatTraceSession,
+  messages: z.infer<typeof requestSchema>["messages"],
+  latestAssistantText?: string
+) {
+  const transcript = [
+    { role: "system", content: systemPrompt },
+    ...buildConversationMessages(messages),
+    ...(latestAssistantText ? [{ role: "assistant", content: latestAssistantText }] : []),
+  ];
+
+  setSessionSpanMetadata(
+    session,
+    {
+      format: "chat_conversation",
+      messages: transcript,
+    },
+    latestAssistantText
+      ? {
+          format: "chat_conversation",
+          messages: transcript,
+        }
+      : undefined,
+    {
+      conversation_message_count: transcript.length,
+    }
+  );
+  emitSessionPartial(session);
+}
+
+async function closeChatTraceSession(sessionId: string, reason = "completed") {
+  const session = chatTraceSessions.get(sessionId);
+  if (!session) return;
+
+  chatTraceSessions.delete(sessionId);
+  if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
+
+  runWithSessionSpan(session, () => {
+    setSessionSpanMetadata(
+      session,
+      undefined,
+      {
+        session_id: session.sessionId,
+        close_reason: reason,
+        total_turns: session.turnCount,
+        last_user_text: session.lastUserText,
+        last_message_count: session.lastMessageCount,
+        duration_ms: Date.now() - session.createdAtMs
+      },
+      {
+        chat_session_id: session.sessionId,
+        session_status: "ended",
+        close_reason: reason,
+        turn_count: session.turnCount,
+        message_count: session.lastMessageCount,
+        last_activity_at: new Date(session.lastActivityAt).toISOString(),
+        ended_at: new Date().toISOString()
+      }
+    );
+    session.rootSpan.end();
+  });
+
+  await Tracer.forceFlush().catch(() => {});
+}
+
 async function* createUserMessageStream(
   prompt: string,
+  sessionId: string,
   images?: { mediaType: string; data: string }[]
 ): AsyncIterable<SDKUserMessage> {
   yield {
     type: "user",
-    session_id: "design-god",
+    session_id: sessionId,
     parent_tool_use_id: null,
     message: {
       role: "user",
@@ -147,6 +399,17 @@ async function* createUserMessageStream(
     }
   };
 }
+
+app.post("/api/chat/session/end", async (req, res) => {
+  try {
+    const { sessionId, reason } = endSessionSchema.parse(req.body);
+    await closeChatTraceSession(sessionId, reason ?? "client_closed");
+    res.status(204).end();
+  } catch (error) {
+    console.error("Session close error:", error);
+    res.status(400).json({ error: "Failed to close chat session" });
+  }
+});
 
 app.post("/api/chat", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
@@ -178,76 +441,122 @@ app.post("/api/chat", async (req, res) => {
 
     const prompt = toPrompt(messages);
     const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
+    const activeSessionId = sessionId ?? crypto.randomUUID();
+    const traceSession = getOrCreateChatTraceSession(activeSessionId, latest.text ?? "", messages.length);
+    const turnIndex = beginChatTraceTurn(traceSession, latest.text ?? "", messages.length, hasImages);
+    updateSessionConversationSnapshot(traceSession, messages);
 
-    const runQuery = Tracer.observe(async function designGodRun(userText: string): Promise<string> {
-      const sdkMessages: SDKMessage[] = [];
+    const text = await runWithSessionSpan(traceSession, async () => {
+      const runQuery = Tracer.observe(async function designGodRun(userText: string): Promise<string> {
+        // Judgment trace metadata — mirrors deep-research-agent's tracer.set_session_id / set_input / set_attributes pattern
+        Tracer.setSessionId(activeSessionId);
+        Tracer.setInput(userText);
+        Tracer.setAttributes({
+          chat_session_id: activeSessionId,
+          turn_index: turnIndex,
+          has_images: hasImages,
+          message_count: messages.length,
+        });
 
-      // Track pending tool calls so we can pair them with their results
-      const pendingTools = new Map<string, { name: string; input: unknown }>();
+        const sdkMessages: SDKMessage[] = [];
 
-      for await (const message of query({
-        prompt: images.length > 0 ? createUserMessageStream(prompt, images) : prompt,
-        options: {
-          customSystemPrompt: systemPrompt,
-          allowedTools: ["Skill", "WebSearch"],
-          env: { ...process.env, HOME: claudeHome }
-        }
-      })) {
-        sdkMessages.push(message);
+        // Track pending tool calls so we can pair them with their results
+        const pendingTools = new Map<string, { name: string; input: unknown }>();
 
-        if (message.type === "assistant") {
-          type Block = { type: string; id?: string; name?: string; input?: unknown; text?: string };
-          const blocks = message.message.content as Block[];
-          const textContent = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("");
-          const toolUseBlocks = blocks.filter(b => b.type === "tool_use");
-
-          // One LLM span per assistant turn
-          await Tracer.observe(async function llmTurn(
-            input: string,
-            output: { text: string; tool_calls: { name?: string; input: unknown }[] }
-          ) { return output; }, "llm")(userText, {
-            text: textContent,
-            tool_calls: toolUseBlocks.map(b => ({ name: b.name, input: b.input }))
-          });
-
-          for (const block of blocks) {
-            if (block.type === "tool_use") {
-              pendingTools.set(block.id!, { name: block.name!, input: block.input });
-              emit("tool_use", { id: block.id, name: block.name, summary: summarizeInput(block.input) });
-            } else if (block.type === "text" && block.text?.trim()) {
-              emit("phase", { label: "Responding…" });
-            }
+        for await (const message of query({
+          prompt: images.length > 0 ? createUserMessageStream(prompt, activeSessionId, images) : prompt,
+          options: {
+            customSystemPrompt: systemPrompt,
+            allowedTools: ["Skill", "WebSearch"],
+            env: { ...process.env, HOME: claudeHome }
           }
-        } else if (message.type === "user") {
-          type ResultBlock = { type: string; tool_use_id?: string; content?: unknown };
-          for (const block of message.message.content as ResultBlock[]) {
-            if (block.type === "tool_result") {
-              const tool = pendingTools.get(block.tool_use_id!);
-              const result = extractToolResultText(block.content);
-              if (tool) {
-                // One tool span per tool call — name+input → result
-                await Tracer.observe(async function toolCall(
-                  name: string, input: unknown, output: string
-                ) { return output; }, "tool")(tool.name, tool.input, result);
-                pendingTools.delete(block.tool_use_id!);
+        })) {
+          sdkMessages.push(message);
+
+          if (message.type === "assistant") {
+            type Block = { type: string; id?: string; name?: string; input?: unknown; text?: string };
+            const blocks = message.message.content as Block[];
+            const textContent = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("");
+            const toolUseBlocks = blocks.filter(b => b.type === "tool_use");
+
+            // One LLM span per assistant turn — explicitly set input/output for clarity
+            await Tracer.observe(async function llmTurn() {
+              const inputPayload = {
+                format: "chat_conversation",
+                system: systemPrompt,
+                messages: buildConversationMessages(messages),
+                tools: ["Skill", "WebSearch"],
+              };
+              const outputPayload = {
+                format: "chat_conversation",
+                message: buildAssistantMessage(textContent, toolUseBlocks),
+              };
+
+              Tracer.setInput(inputPayload);
+              Tracer.setOutput(outputPayload);
+              return outputPayload;
+            }, "llm")();
+
+            for (const block of blocks) {
+              if (block.type === "tool_use") {
+                pendingTools.set(block.id!, { name: block.name!, input: block.input });
+                emit("tool_use", { id: block.id, name: block.name, summary: summarizeInput(block.input) });
+              } else if (block.type === "text" && block.text?.trim()) {
+                emit("phase", { label: "Responding…" });
               }
-              emit("tool_result", { id: block.tool_use_id, summary: result.slice(0, 80) });
+            }
+          } else if (message.type === "user") {
+            type ResultBlock = { type: string; tool_use_id?: string; content?: unknown };
+            for (const block of message.message.content as ResultBlock[]) {
+              if (block.type === "tool_result") {
+                const tool = pendingTools.get(block.tool_use_id!);
+                const result = extractToolResultText(block.content);
+                if (tool) {
+                  // One tool span per tool call — name+input → result
+                  await Tracer.observe(async function toolCall() {
+                    Tracer.setInput({ name: tool.name, input: tool.input });
+                    Tracer.setOutput(result);
+                  }, "tool")();
+                  pendingTools.delete(block.tool_use_id!);
+                }
+                emit("tool_result", { id: block.tool_use_id, summary: result.slice(0, 80) });
+              }
             }
           }
         }
-      }
 
-      const resultMsg = [...sdkMessages].reverse().find(
-        (m): m is Extract<SDKMessage, { type: "result"; subtype: "success" }> =>
-          m.type === "result" && m.subtype === "success"
-      );
-      return (resultMsg?.result ?? extractText(sdkMessages)).trim();
-    }, "function");
+        const terminalResult = [...sdkMessages].reverse().find(
+          (m): m is SDKResultMessage => m.type === "result"
+        );
 
-    const convCtx = sessionId ? getOrCreateConversationCtx(sessionId) : context.active();
-    const text = await context.with(convCtx, () => runQuery(latest.text ?? ""));
+        if (terminalResult) {
+          recordRunMetadata(terminalResult);
+        }
+
+        if (terminalResult && (terminalResult.subtype !== "success" || terminalResult.is_error)) {
+          const agentError = new Error(`Design God run failed with result subtype "${terminalResult.subtype}".`);
+          annotateCurrentSpanError(agentError, {
+            permission_denials_detail: terminalResult.permission_denials,
+          });
+          throw agentError;
+        }
+
+        const resultMsg = terminalResult?.subtype === "success" ? terminalResult : undefined;
+        const finalText = (resultMsg?.result ?? extractText(sdkMessages)).trim();
+
+        // Explicit output on the root span for Judgment trace display
+        Tracer.setOutput(finalText);
+        updateSessionConversationSnapshot(traceSession, messages, finalText);
+        return finalText;
+      }, "function");
+
+      return await runQuery(latest.text ?? "");
+    });
     emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
   } catch (error) {
+    annotateCurrentSpanError(error, {
+      route: "/api/chat",
+    });
     emit("error", { message: error instanceof Error ? error.message : "Unknown error" });
     console.error(error);
   }
@@ -281,6 +590,44 @@ function parseMeta(html: string, baseUrl: string) {
   };
 }
 
+app.get("/api/skills", (_req, res) => {
+  const skillDirs = [
+    { base: path.join(process.env.HOME ?? "", ".claude", "skills"), source: "global" },
+    { base: path.join(process.cwd(), ".claude-home", ".claude", "skills"), source: "local" },
+  ];
+
+  const skills: { id: string; name: string; description: string; source: string; preview: string }[] = [];
+
+  for (const { base, source } of skillDirs) {
+    if (!fs.existsSync(base)) continue;
+    const entries = fs.readdirSync(base, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const skillFile = path.join(base, entry.name, "SKILL.md");
+      if (!fs.existsSync(skillFile)) continue;
+      const raw = fs.readFileSync(skillFile, "utf-8");
+
+      const fmMatch = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+      let name = entry.name;
+      let description = "";
+      let body = raw;
+      if (fmMatch) {
+        const fm = fmMatch[1];
+        body = fmMatch[2];
+        const nameMatch = fm.match(/^name:\s*(.+)$/m);
+        const descMatch = fm.match(/^description:\s*(.+)$/m);
+        if (nameMatch) name = nameMatch[1].trim();
+        if (descMatch) description = descMatch[1].trim();
+      }
+
+      const preview = body.split("\n").find(l => l.trim().length > 0)?.trim() ?? "";
+      skills.push({ id: entry.name, name, description, source, preview });
+    }
+  }
+
+  res.json(skills);
+});
+
 app.post("/api/preview", async (req, res) => {
   try {
     const { url } = z.object({ url: z.string().url() }).parse(req.body);
@@ -302,8 +649,52 @@ app.post("/api/preview", async (req, res) => {
 });
 
 (async () => {
-  await Tracer.init({ projectName: "design-god" });
-  console.log("Judgment tracing enabled");
+  const judgmentApiKey = process.env.JUDGMENT_API_KEY?.trim();
+  const judgmentOrgId = process.env.JUDGMENT_ORG_ID?.trim();
+  const judgmentApiUrl = process.env.JUDGMENT_API_URL?.trim();
+
+  // Graceful init — server starts even if Judgment credentials are missing or init falls back to no-op mode
+  if (!judgmentApiKey) {
+    console.log("[tracing] JUDGMENT_API_KEY not set — tracing disabled");
+  } else if (!judgmentOrgId) {
+    console.log("[tracing] JUDGMENT_ORG_ID not set — tracing disabled");
+  } else {
+    try {
+      const tracer = await Tracer.init({
+        projectName: judgmentProjectName,
+        apiKey: judgmentApiKey,
+        organizationId: judgmentOrgId,
+        apiUrl: judgmentApiUrl || undefined,
+        environment: process.env.NODE_ENV ?? "development",
+        resourceAttributes: {
+          "service.version": process.env.npm_package_version ?? "0.1.0",
+        }
+      });
+      judgmentTracer = tracer;
+
+      if (tracer.projectId) {
+        console.log(`[tracing] Judgment tracing enabled for project "${tracer.projectName}" (${tracer.projectId})`);
+      } else {
+        console.warn(
+          `[tracing] Judgment tracer initialized in no-op mode. Check project "${judgmentProjectName}" exists and credentials are valid.`
+        );
+      }
+    } catch (err) {
+      console.warn("[tracing] Judgment init failed — tracing disabled:", err instanceof Error ? err.message : err);
+    }
+  }
+
+  // Flush buffered spans before the process exits so no traces are lost
+  const shutdown = async () => {
+    await Promise.all(
+      Array.from(chatTraceSessions.keys()).map((sessionId) => closeChatTraceSession(sessionId, "process_exit"))
+    ).catch(() => {});
+    await Tracer.forceFlush().catch(() => {});
+    await Tracer.shutdown().catch(() => {});
+    process.exit(0);
+  };
+  process.once("SIGTERM", shutdown);
+  process.once("SIGINT", shutdown);
 
   app.listen(port, () => {
     console.log(`Design God server listening on http://localhost:${port}`);

@@ -25,4 +25,5 @@ Server: `http://localhost:8787`
 
 - The backend uses the latest user image as the visual input for the Claude call.
 - Session state is kept in the browser only, which matches the V1 scope.
-- There is no logging, tracing, persistence, or external design-tool integration in this version.
+- Judgment tracing is available on the server when `JUDGMENT_API_KEY` and `JUDGMENT_ORG_ID` are set and the `design-god` project exists in Judgment.
+- Traces are grouped under a long-lived `run_session` span per chat session, with each `designGodRun` turn nested beneath it. Sessions close on "new chat" or after `DESIGN_GOD_SESSION_TIMEOUT_MS` of inactivity.
