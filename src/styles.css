@@ -54,13 +54,6 @@ textarea {
   border-right: 1px solid #f0f0f0;
   z-index: 20;
   background: #fff;
-  overflow: hidden;
-  transition: width 220ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.sidebar.sidebar-expanded {
-  width: 200px;
-  align-items: stretch;
 }
 
 .sidebar-top {
@@ -73,13 +66,11 @@ textarea {
   background: none;
   border: none;
   cursor: pointer;
-  padding: 6px 8px;
+  padding: 6px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: center;
   border-radius: 8px;
-  width: 100%;
-  white-space: nowrap;
   transition: background 150ms ease-out;
 }
 
@@ -87,79 +78,40 @@ textarea {
   background: #f5f5f5;
 }
 
-.sidebar-logo-wrap {
-  position: relative;
-  width: 20px;
-  height: 20px;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
 .sidebar-logo {
-  position: absolute;
   height: 20px;
   width: auto;
   display: block;
-  transition: opacity 160ms ease-out, filter 160ms ease-out;
-}
-
-.sidebar-expand-icon {
-  position: absolute;
-  color: #555;
-  transition: opacity 160ms ease-out, filter 160ms ease-out;
-}
-
-.sidebar-brand {
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: #111;
-  letter-spacing: -0.01em;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: opacity 180ms ease-out 60ms, transform 180ms cubic-bezier(0.23, 1, 0.32, 1) 60ms;
-  overflow: hidden;
-}
-
-.sidebar-expanded .sidebar-brand {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .sidebar-actions {
   display: flex;
   flex-direction: column;
-  align-items: stretch;
-  gap: 2px;
+  align-items: center;
+  gap: 4px;
   width: 100%;
-  padding: 0 8px;
+  padding: 0 6px;
 }
 
 .sidebar-btn-wrap {
   position: relative;
   width: 100%;
+  display: flex;
+  justify-content: center;
 }
 
 .sidebar-btn {
   background: none;
   border: none;
   cursor: pointer;
-  width: 100%;
-  height: 34px;
-  border-radius: 8px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
   color: #aaa;
-  padding: 0 8px;
   transition: background 150ms ease-out, color 150ms ease-out, transform 100ms ease-out;
-  white-space: nowrap;
-}
-
-.sidebar-expanded .sidebar-btn {
-  justify-content: flex-start;
 }
 
 .sidebar-btn:hover {
@@ -174,21 +126,6 @@ textarea {
 .sidebar-btn.active {
   background: #f0f0f0;
   color: #111;
-}
-
-.sidebar-btn-label {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: inherit;
-  opacity: 0;
-  transform: translateX(-4px);
-  transition: opacity 160ms ease-out 40ms, transform 160ms cubic-bezier(0.23, 1, 0.32, 1) 40ms;
-  overflow: hidden;
-}
-
-.sidebar-expanded .sidebar-btn-label {
-  opacity: 1;
-  transform: translateX(0);
 }
 
 .sidebar-tooltip {
@@ -567,9 +504,9 @@ textarea {
 .composer {
   position: fixed;
   bottom: 0;
-  left: 50%;
+  left: calc(50% + 26px);
   transform: translateX(-50%);
-  width: min(680px, 100%);
+  width: min(680px, calc(100% - 52px));
   padding: 12px 24px 28px;
 }
 
@@ -588,7 +525,7 @@ textarea {
   padding: 10px 10px 10px 16px;
   background: #fff;
   box-shadow: var(--shadow-sm);
-  transition: border-radius 220ms cubic-bezier(0.23, 1, 0.32, 1);
+  transition: border-radius 200ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .composer-box.expanded {
@@ -621,37 +558,39 @@ textarea {
   margin-left: auto;
 }
 
-/* Buttons fade+slide in when entering expanded layout */
-.composer-box.expanded:not(.collapsing) .attach-button,
-.composer-box.expanded:not(.collapsing) .send-button {
+/* Buttons enter: staggered, scale + translate */
+.composer-box.expanded:not(.collapsing) .attach-button {
   animation: btn-enter 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
+.composer-box.expanded:not(.collapsing) .send-button {
+  animation: btn-enter 220ms cubic-bezier(0.23, 1, 0.32, 1) 30ms both;
+}
 
-/* Buttons fade+slide out when collapsing */
+/* Buttons exit: fast ease-out — starts moving immediately, no sluggish delay */
 .composer-box.collapsing .attach-button,
 .composer-box.collapsing .send-button {
-  animation: btn-leave 180ms ease-in forwards;
+  animation: btn-leave 140ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
 }
 
 @keyframes btn-enter {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(5px) scale(0.96);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
 }
 
 @keyframes btn-leave {
   from {
     opacity: 1;
-    transform: translateY(0);
+    transform: translateY(0) scale(1);
   }
   to {
     opacity: 0;
-    transform: translateY(-4px);
+    transform: translateY(-3px) scale(0.97);
   }
 }
 

@@ -347,7 +347,7 @@ export function App() {
     } else {
       setIsMultiLine(false);
       // Delay removing the expanded class so buttons can fade out first
-      collapseTimerRef.current = setTimeout(() => setExpandedClass(false), 180);
+      collapseTimerRef.current = setTimeout(() => setExpandedClass(false), 150);
     }
   }
 
