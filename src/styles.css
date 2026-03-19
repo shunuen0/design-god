@@ -64,6 +64,14 @@ textarea {
   color: #111;
 }
 
+.app-logo {
+  height: 18px;
+  cursor: pointer;
+  width: auto;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
 .app-title {
   font-size: 0.95rem;
   font-weight: 500;
@@ -125,6 +133,11 @@ textarea {
   padding: 16px 24px 120px;
   flex: 1;
   overflow-y: auto;
+  scrollbar-width: none;
+}
+
+.thread::-webkit-scrollbar {
+  display: none;
 }
 
 .message-card {

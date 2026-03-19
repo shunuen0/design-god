@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
 import { Tracer } from "judgeval";
+import { context, trace, type Context, type Span } from "@opentelemetry/api";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
@@ -15,6 +16,34 @@ fs.mkdirSync(claudeHome, { recursive: true });
 
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
+
+const CONV_TTL_MS = 30 * 60 * 1000;
+
+const conversationTraces = new Map<string, { ctx: Context; span: Span; lastActivity: number }>();
+
+function getOrCreateConversationCtx(sessionId: string): Context {
+  const now = Date.now();
+
+  // Prune stale sessions
+  for (const [id, entry] of conversationTraces) {
+    if (now - entry.lastActivity > CONV_TTL_MS) {
+      entry.span.end();
+      conversationTraces.delete(id);
+    }
+  }
+
+  const existing = conversationTraces.get(sessionId);
+  if (existing) {
+    existing.lastActivity = now;
+    return existing.ctx;
+  }
+
+  const tracer = trace.getTracer("design-god");
+  const span = tracer.startSpan("conversation");
+  const ctx = trace.setSpan(context.active(), span);
+  conversationTraces.set(sessionId, { ctx, span, lastActivity: now });
+  return ctx;
+}
 
 const requestSchema = z.object({
   messages: z.array(
@@ -49,6 +78,7 @@ Formatting rules:
 - If there is no screenshot, focus only on copy clarity, tone, and structure
 - If there is a screenshot, you may also critique layout clarity, hierarchy, and CTA visibility
 - No preamble. No filler. Start directly with the content.
+- If you used web search, end your response with a **Sources** section listing each source as a markdown link: [Title](URL). Only include sources you actually referenced.
 - Never mention Claude, Anthropic, Claude Code, the Agent SDK, or any underlying infrastructure. You are Design God — that is the only identity you have.`;
 
 function dataUrlParts(dataUrl: string) {
@@ -149,9 +179,11 @@ app.post("/api/chat", async (req, res) => {
     const prompt = toPrompt(messages);
     const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
 
-    const runQuery = Tracer.observe(async function designGodChat(userText: string): Promise<string> {
-      if (sessionId) (Tracer as any).setSessionId?.(sessionId);
+    const runQuery = Tracer.observe(async function designGodRun(userText: string): Promise<string> {
       const sdkMessages: SDKMessage[] = [];
+
+      // Track pending tool calls so we can pair them with their results
+      const pendingTools = new Map<string, { name: string; input: unknown }>();
 
       for await (const message of query({
         prompt: images.length > 0 ? createUserMessageStream(prompt, images) : prompt,
@@ -165,8 +197,22 @@ app.post("/api/chat", async (req, res) => {
 
         if (message.type === "assistant") {
           type Block = { type: string; id?: string; name?: string; input?: unknown; text?: string };
-          for (const block of message.message.content as Block[]) {
+          const blocks = message.message.content as Block[];
+          const textContent = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("");
+          const toolUseBlocks = blocks.filter(b => b.type === "tool_use");
+
+          // One LLM span per assistant turn
+          await Tracer.observe(async function llmTurn(
+            input: string,
+            output: { text: string; tool_calls: { name?: string; input: unknown }[] }
+          ) { return output; }, "llm")(userText, {
+            text: textContent,
+            tool_calls: toolUseBlocks.map(b => ({ name: b.name, input: b.input }))
+          });
+
+          for (const block of blocks) {
             if (block.type === "tool_use") {
+              pendingTools.set(block.id!, { name: block.name!, input: block.input });
               emit("tool_use", { id: block.id, name: block.name, summary: summarizeInput(block.input) });
             } else if (block.type === "text" && block.text?.trim()) {
               emit("phase", { label: "Responding…" });
@@ -176,10 +222,16 @@ app.post("/api/chat", async (req, res) => {
           type ResultBlock = { type: string; tool_use_id?: string; content?: unknown };
           for (const block of message.message.content as ResultBlock[]) {
             if (block.type === "tool_result") {
-              emit("tool_result", {
-                id: block.tool_use_id,
-                summary: extractToolResultText(block.content).slice(0, 80)
-              });
+              const tool = pendingTools.get(block.tool_use_id!);
+              const result = extractToolResultText(block.content);
+              if (tool) {
+                // One tool span per tool call — name+input → result
+                await Tracer.observe(async function toolCall(
+                  name: string, input: unknown, output: string
+                ) { return output; }, "tool")(tool.name, tool.input, result);
+                pendingTools.delete(block.tool_use_id!);
+              }
+              emit("tool_result", { id: block.tool_use_id, summary: result.slice(0, 80) });
             }
           }
         }
@@ -190,9 +242,10 @@ app.post("/api/chat", async (req, res) => {
           m.type === "result" && m.subtype === "success"
       );
       return (resultMsg?.result ?? extractText(sdkMessages)).trim();
-    }, "llm");
+    }, "function");
 
-    const text = await runQuery(latest.text ?? "");
+    const convCtx = sessionId ? getOrCreateConversationCtx(sessionId) : context.active();
+    const text = await context.with(convCtx, () => runQuery(latest.text ?? ""));
     emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
   } catch (error) {
     emit("error", { message: error instanceof Error ? error.message : "Unknown error" });
@@ -249,14 +302,8 @@ app.post("/api/preview", async (req, res) => {
 });
 
 (async () => {
-  if (process.env.JUDGMENT_API_KEY && process.env.JUDGMENT_ORG_ID) {
-    try {
-      await Tracer.init({ projectName: "design-god" });
-      console.log("Judgment tracing enabled");
-    } catch (e) {
-      console.warn("Judgment tracing init failed:", e);
-    }
-  }
+  await Tracer.init({ projectName: "design-god" });
+  console.log("Judgment tracing enabled");
 
   app.listen(port, () => {
     console.log(`Design God server listening on http://localhost:${port}`);

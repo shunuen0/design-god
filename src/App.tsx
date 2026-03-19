@@ -355,6 +355,18 @@ export function App() {
     setGalleryItems((prev) => prev.filter((i) => i.id !== id));
   }
 
+  function startNewChat() {
+    setMessages([]);
+    setDraft("");
+    setImageDataUrls([]);
+    setImageNames([]);
+    setStreamingPhase(null);
+    setStreamingText("");
+    setToolCalls([]);
+    setSessionId(crypto.randomUUID());
+    if (animationRef.current) { clearInterval(animationRef.current); animationRef.current = null; }
+  }
+
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (!canSend || isSending) return;
@@ -551,7 +563,7 @@ export function App() {
 
   const header = (
     <header className="app-header">
-      <ScrambleTitle idle="デザイン神" hover="Design God" />
+      <img src="/src/god.png" alt="Design God" className="app-logo" role="button" tabIndex={0} onClick={startNewChat} onKeyDown={(e) => e.key === "Enter" && startNewChat()} />
       <div className="header-actions">
         <button
           type="button"
@@ -564,17 +576,7 @@ export function App() {
         <button
           type="button"
           className="new-chat-button"
-          onClick={() => {
-            setMessages([]);
-            setDraft("");
-            setImageDataUrls([]);
-            setImageNames([]);
-            setStreamingPhase(null);
-            setStreamingText("");
-            setToolCalls([]);
-            setSessionId(crypto.randomUUID());
-            if (animationRef.current) { clearInterval(animationRef.current); animationRef.current = null; }
-          }}
+          onClick={startNewChat}
           title="New chat"
         >
           <Plus size={18} strokeWidth={1.75} />
