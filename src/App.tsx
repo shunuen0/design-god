@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, ArrowUp, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
 import { Streamdown } from "streamdown";
+import godLogo from "./god.png";
 import type { ChatMessage, GalleryItem, ToolCallItem } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787/api/chat";
@@ -563,7 +564,7 @@ export function App() {
 
   const header = (
     <header className="app-header">
-      <img src="/src/god.png" alt="Design God" className="app-logo" role="button" tabIndex={0} onClick={startNewChat} onKeyDown={(e) => e.key === "Enter" && startNewChat()} />
+      <img src={godLogo} alt="Design God" className="app-logo" role="button" tabIndex={0} onClick={startNewChat} onKeyDown={(e) => e.key === "Enter" && startNewChat()} />
       <div className="header-actions">
         <button
           type="button"
