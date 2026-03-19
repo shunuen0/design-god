@@ -2,10 +2,7 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { query, type SDKMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
-import { Judgeval } from "judgeval";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let tracer: any = null;
+import { Tracer } from "judgeval";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
@@ -113,7 +110,7 @@ async function* createUserMessageStream(
               { type: "text", text: prompt },
               ...images.map((img) => ({
                 type: "image" as const,
-                source: { type: "base64" as const, media_type: img.mediaType, data: img.data }
+                source: { type: "base64" as const, media_type: img.mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp", data: img.data }
               }))
             ]
           : prompt
@@ -152,8 +149,8 @@ app.post("/api/chat", async (req, res) => {
     const prompt = toPrompt(messages);
     const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
 
-    const chatFn = async function designGodChat(userText: string): Promise<string> {
-      if (tracer && sessionId) tracer.setSessionId(sessionId);
+    const runQuery = Tracer.observe(async function designGodChat(userText: string): Promise<string> {
+      if (sessionId) (Tracer as any).setSessionId?.(sessionId);
       const sdkMessages: SDKMessage[] = [];
 
       for await (const message of query({
@@ -193,9 +190,8 @@ app.post("/api/chat", async (req, res) => {
           m.type === "result" && m.subtype === "success"
       );
       return (resultMsg?.result ?? extractText(sdkMessages)).trim();
-    };
+    }, "llm");
 
-    const runQuery = tracer ? tracer.observe(chatFn, "llm") : chatFn;
     const text = await runQuery(latest.text ?? "");
     emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
   } catch (error) {
@@ -255,8 +251,7 @@ app.post("/api/preview", async (req, res) => {
 (async () => {
   if (process.env.JUDGMENT_API_KEY && process.env.JUDGMENT_ORG_ID) {
     try {
-      const client = Judgeval.create();
-      tracer = await client.nodeTracer.create({ projectName: "design-god" });
+      await Tracer.init({ projectName: "design-god" });
       console.log("Judgment tracing enabled");
     } catch (e) {
       console.warn("Judgment tracing init failed:", e);
