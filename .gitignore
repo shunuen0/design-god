@@ -1,0 +1,19 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-server/
+
+# Environment variables (contains secrets)
+.env
+.env.local
+.env.*.local
+
+# Claude internal
+.claude/
+.claude-home/
+.claude-home-test/
+
+# OS
+.DS_Store
