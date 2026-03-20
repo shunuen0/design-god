@@ -1,12 +1,13 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, ArrowUp, Square, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
+import { Paperclip, ArrowUp, Square, Search, FileText, Terminal, Globe, Zap, Images, X, Check, Copy } from "lucide-react";
 import { Streamdown } from "streamdown";
+import { buildCodingPrompt, hydrateAssistantResponses } from "./assistantResponse";
 import { HistoryPanel } from "./HistoryPanel";
 import { Sidebar } from "./Sidebar";
 import { SkillsPanel } from "./SkillsPanel";
 import { buildChatThread, getChatThread, listChatThreads, saveChatThread, summarizeChatThread } from "./chatHistory";
 import { useTheme } from "./useTheme";
-import type { ChatMessage, ChatThreadSummary, GalleryItem, ToolCallItem } from "./types";
+import type { ChatMessage, ChatThreadSummary, GalleryItem, Recommendation, ToolCallItem } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787/api/chat";
 const PREVIEW_URL = API_URL.replace(/\/api\/chat$/, "/api/preview");
@@ -117,7 +118,108 @@ function ThinkingIndicator({ phase, toolCalls }: { phase: string; toolCalls: Too
   );
 }
 
-function MessageCard({ message }: { message: ChatMessage }) {
+function AssistantMessageCard({ message, sourceMessage }: { message: ChatMessage; sourceMessage?: ChatMessage }) {
+  const recommendations = message.response?.recommendations ?? [];
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+
+  const selectedRecommendations = useMemo(
+    () => recommendations.filter((recommendation) => selectedIds.includes(recommendation.id)),
+    [recommendations, selectedIds]
+  );
+
+  const implementationPrompt = useMemo(() => {
+    if (selectedRecommendations.length === 0) return "";
+    return buildCodingPrompt({
+      selectedRecommendations,
+      sourceMessage,
+      assistantText: message.text,
+    });
+  }, [message.text, selectedRecommendations, sourceMessage]);
+
+  function toggleRecommendation(recommendation: Recommendation) {
+    setSelectedIds((current) =>
+      current.includes(recommendation.id)
+        ? current.filter((id) => id !== recommendation.id)
+        : [...current, recommendation.id]
+    );
+    setCopyState("idle");
+  }
+
+  async function copyPrompt() {
+    if (!implementationPrompt) return;
+
+    try {
+      await navigator.clipboard.writeText(implementationPrompt);
+      setCopyState("copied");
+      setTimeout(() => setCopyState("idle"), 2000);
+    } catch {
+      setCopyState("failed");
+    }
+  }
+
+  return (
+    <article className="message-card assistant">
+      <Streamdown linkSafety={{ enabled: false }}>{message.text}</Streamdown>
+      {recommendations.length > 0 && (
+        <section className="implementation-bridge">
+          <div className="implementation-bridge-header">
+            <div className="implementation-bridge-copy">
+              <span className="implementation-bridge-title">Send selected fixes to your coding agent</span>
+              <span className="implementation-bridge-subtitle">Select the recommendations you actually want implemented.</span>
+            </div>
+            <span className="implementation-bridge-count">
+              {selectedRecommendations.length}/{recommendations.length}
+            </span>
+          </div>
+
+          <div className="recommendation-list">
+            {recommendations.map((recommendation, index) => {
+              const active = selectedIds.includes(recommendation.id);
+
+              return (
+                <button
+                  key={recommendation.id}
+                  type="button"
+                  className={`recommendation-chip${active ? " active" : ""}`}
+                  style={{ animationDelay: `${index * 36}ms` }}
+                  onClick={() => toggleRecommendation(recommendation)}
+                  aria-pressed={active}
+                >
+                  <div className="recommendation-chip-main">
+                    <span className={`recommendation-checkbox${active ? " checked" : ""}`} aria-hidden="true">
+                      {active ? "✓" : ""}
+                    </span>
+                    <span className="recommendation-text">{recommendation.text}</span>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          {implementationPrompt && (
+            <div className="implementation-prompt-card">
+              <div className="implementation-prompt-header">
+                <span className="implementation-prompt-title">Implementation Prompt</span>
+                <button type="button" className={`implementation-copy-btn${copyState === "copied" ? " copied" : ""}`} onClick={copyPrompt} aria-label="Copy prompt">
+                  <span className="copy-btn-content">
+                    <Copy size={13} strokeWidth={2} />
+                  </span>
+                  <span className="copy-btn-check">
+                    <Check size={13} strokeWidth={2.5} />
+                  </span>
+                </button>
+              </div>
+              <pre className="implementation-prompt-preview">{implementationPrompt}</pre>
+            </div>
+          )}
+        </section>
+      )}
+    </article>
+  );
+}
+
+function MessageCard({ message, sourceMessage }: { message: ChatMessage; sourceMessage?: ChatMessage }) {
   if (message.role === "user") {
     return (
       <div className="message-card user">
@@ -133,11 +235,7 @@ function MessageCard({ message }: { message: ChatMessage }) {
     );
   }
 
-  return (
-    <article className="message-card assistant">
-      <Streamdown linkSafety={false}>{message.text}</Streamdown>
-    </article>
-  );
+  return <AssistantMessageCard message={message} sourceMessage={sourceMessage} />;
 }
 
 function GalleryCard({ item, onRemove }: { item: GalleryItem; onRemove: (id: string) => void }) {
@@ -421,7 +519,7 @@ export function App() {
           setActiveChatId(latestThread.id);
           setActiveChatCreatedAt(latestThread.createdAt);
           setSessionId(latestThread.sessionId);
-          setMessages(latestThread.messages);
+          setMessages(hydrateAssistantResponses(latestThread.messages));
         }
       } finally {
         if (!cancelled) setHistoryLoading(false);
@@ -520,7 +618,7 @@ export function App() {
 
     endChatSession(sessionId, "history_switch");
     resetTransientState();
-    setMessages(thread.messages);
+    setMessages(hydrateAssistantResponses(thread.messages));
     setActiveChatId(thread.id);
     setActiveChatCreatedAt(thread.createdAt);
     setSessionId(thread.sessionId);
@@ -611,7 +709,15 @@ export function App() {
                 animationRef.current = null;
                 setMessages((current) => [
                   ...current,
-                  { id: data.id, role: "assistant", text: fullText, createdAt: data.createdAt }
+                  {
+                    id: data.id,
+                    role: "assistant",
+                    text: fullText,
+                    createdAt: data.createdAt,
+                    response: hydrateAssistantResponses([
+                      { id: data.id, role: "assistant", text: fullText, createdAt: data.createdAt }
+                    ])[0].response
+                  }
                 ]);
                 setStreamingText("");
               }
@@ -790,15 +896,19 @@ export function App() {
       {sidebar}
       <div className="app-shell">
         <div className="thread">
-          {messages.map((message) => (
-            <MessageCard key={message.id} message={message} />
+          {messages.map((message, index) => (
+            <MessageCard
+              key={message.id}
+              message={message}
+              sourceMessage={message.role === "assistant" ? [...messages.slice(0, index)].reverse().find((entry) => entry.role === "user") : undefined}
+            />
           ))}
           {streamingPhase && !streamingText && (
             <ThinkingIndicator phase={streamingPhase} toolCalls={toolCalls} />
           )}
           {streamingText && (
             <article className="message-card assistant">
-              <Streamdown mode="streaming" animated caret="block" linkSafety={false}>
+              <Streamdown mode="streaming" animated caret="block" linkSafety={{ enabled: false }}>
                 {streamingText}
               </Streamdown>
             </article>

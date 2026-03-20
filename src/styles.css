@@ -663,7 +663,7 @@ html.dark .skill-badge.local {
   display: flex;
   flex-direction: column;
   gap: 24px;
-  padding: 48px 24px 120px;
+  padding: 48px 24px 160px;
   flex: 1;
   overflow-y: auto;
   scrollbar-width: none;
@@ -700,6 +700,9 @@ html.dark .skill-badge.local {
 .message-card.assistant {
   align-self: flex-start;
   max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
 .message-card.assistant p {
@@ -790,6 +793,236 @@ html.dark .skill-badge.local {
   max-width: 400px;
   width: 100%;
   border-radius: 12px;
+}
+
+.implementation-bridge {
+  display: grid;
+  gap: 12px;
+  margin-top: 10px;
+  padding: 14px;
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--surface-subtle) 88%, transparent);
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+.implementation-bridge-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.implementation-bridge-copy {
+  display: grid;
+  gap: 3px;
+}
+
+.implementation-bridge-title {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: var(--fg-strong);
+  letter-spacing: 0.01em;
+}
+
+.implementation-bridge-subtitle {
+  font-size: 0.76rem;
+  color: var(--fg-muted);
+  line-height: 1.45;
+}
+
+.implementation-bridge-count {
+  flex-shrink: 0;
+  min-width: 42px;
+  text-align: center;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--fg-muted);
+  background: color-mix(in srgb, var(--surface) 76%, transparent);
+  border: 1px solid var(--border-light);
+  border-radius: 999px;
+  padding: 4px 8px;
+}
+
+.recommendation-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recommendation-chip {
+  width: 100%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 14px;
+  padding: 12px 13px;
+  text-align: left;
+  display: grid;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--fg);
+  transition: transform 180ms cubic-bezier(0.23, 1, 0.32, 1), border-color 160ms ease-out, background 160ms ease-out, box-shadow 180ms ease-out;
+  opacity: 0;
+  animation: recommendation-in 240ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
+}
+
+.recommendation-chip-main {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.recommendation-checkbox {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--fg-subtle) 38%, var(--border));
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+  color: transparent;
+  transition: background 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out, transform 120ms ease-out;
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.recommendation-chip:hover .recommendation-checkbox {
+  border-color: color-mix(in srgb, var(--fg-subtle) 50%, var(--border));
+}
+
+.recommendation-checkbox.checked {
+  background: var(--send-bg);
+  border-color: var(--send-bg);
+  color: var(--send-fg);
+}
+
+.recommendation-chip:hover {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--border) 64%, var(--fg-subtle));
+  background: var(--surface-hover);
+}
+
+.recommendation-chip:active {
+  transform: scale(0.985);
+}
+
+.recommendation-chip.active {
+  background: color-mix(in srgb, var(--surface-active) 82%, transparent);
+  border-color: color-mix(in srgb, var(--fg-subtle) 34%, var(--border));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fg-subtle) 10%, transparent);
+}
+
+@keyframes recommendation-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.recommendation-text {
+  font-size: 0.87rem;
+  line-height: 1.55;
+  color: var(--fg);
+  padding-top: 1px;
+}
+
+.implementation-prompt-card {
+  display: grid;
+  gap: 12px;
+  border-radius: 16px;
+  padding: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  border: 1px solid var(--border-light);
+}
+
+.implementation-prompt-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.implementation-prompt-title {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: var(--fg-strong);
+}
+
+.implementation-copy-btn {
+  position: relative;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 999px;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  color: var(--fg-muted);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform 100ms cubic-bezier(0.23, 1, 0.32, 1), background 160ms ease-out, border-color 160ms ease-out, color 160ms ease-out;
+  overflow: hidden;
+}
+
+.implementation-copy-btn:hover {
+  background: var(--surface-hover);
+  color: var(--fg);
+}
+
+.implementation-copy-btn:active {
+  transform: scale(0.97);
+}
+
+.copy-btn-content {
+  transition: opacity 140ms ease-out, filter 140ms ease-out, transform 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.copy-btn-check {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0;
+  transform: scale(0.7);
+  color: var(--fg);
+  transition: opacity 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1), filter 140ms ease-out;
+  filter: blur(4px);
+}
+
+.implementation-copy-btn.copied .copy-btn-content {
+  opacity: 0;
+  filter: blur(4px);
+  transform: scale(0.9);
+}
+
+.implementation-copy-btn.copied .copy-btn-check {
+  opacity: 1;
+  transform: scale(1);
+  filter: blur(0px);
+}
+
+.implementation-prompt-preview {
+  margin: 0;
+  padding: 13px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface-subtle) 92%, transparent);
+  font-family: ui-monospace, "SF Mono", monospace;
+  font-size: 0.78rem;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-x: auto;
+  color: var(--fg);
 }
 
 /* Composer */

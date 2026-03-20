@@ -439,44 +439,47 @@ async function runOpenAIChat(
 ): Promise<string> {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-  type OAIMessage = OpenAI.Chat.ChatCompletionMessageParam;
-  const chatMessages: OAIMessage[] = [
-    { role: "system", content: systemPrompt },
-    ...messages.map((m): OAIMessage => {
-      if (m.role === "user" && m.imageDataUrls && m.imageDataUrls.length > 0) {
-        return {
-          role: "user",
-          content: [
-            { type: "text", text: m.text || "" },
-            ...m.imageDataUrls.map((url) => ({
-              type: "image_url" as const,
-              image_url: { url }
-            }))
-          ]
-        };
-      }
-      return { role: m.role, content: m.text || "" };
-    })
-  ];
+  type InputItem = OpenAI.Responses.ResponseInputItem;
+  const input: InputItem[] = messages.map((m): InputItem => {
+    if (m.role === "user" && m.imageDataUrls && m.imageDataUrls.length > 0) {
+      return {
+        role: "user",
+        content: [
+          { type: "input_text", text: m.text || "" },
+          ...m.imageDataUrls.map((url) => ({
+            type: "input_image" as const,
+            image_url: url,
+            detail: "auto" as const,
+          }))
+        ]
+      };
+    }
+    return { role: m.role as "user" | "assistant", content: m.text || "" };
+  });
 
-  const stream = await openai.chat.completions.create({
+  const stream = openai.responses.stream({
     model,
-    messages: chatMessages,
-    stream: true
+    instructions: systemPrompt,
+    input,
+    tools: [{ type: "web_search_preview" }],
   });
 
   let fullText = "";
-  let emittedResponding = false;
-  for await (const chunk of stream) {
-    const delta = chunk.choices[0]?.delta?.content ?? "";
-    if (delta) {
-      if (!emittedResponding) {
-        emit("phase", { label: "Responding…" });
-        emittedResponding = true;
-      }
-      fullText += delta;
+  let searchId: string | null = null;
+
+  for await (const event of stream) {
+    if (event.type === "response.output_item.added" && event.item.type === "web_search_call") {
+      searchId = event.item.id;
+      emit("tool_use", { id: searchId, name: "WebSearch", summary: "Searching the web…" });
+      emit("phase", { label: "Searching…" });
+    } else if (event.type === "response.web_search_call.completed" && searchId) {
+      emit("tool_result", { id: searchId, summary: "Results found" });
+      emit("phase", { label: "Responding…" });
+    } else if (event.type === "response.output_text.delta") {
+      fullText += event.delta;
     }
   }
+
   return fullText;
 }
 

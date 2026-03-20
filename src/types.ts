@@ -9,16 +9,25 @@ export type ChatMessage = {
   response?: AgentResponse;
 };
 
+export type RecommendationSection = "issues" | "quick_wins";
+
+export type Recommendation = {
+  id: string;
+  section: RecommendationSection;
+  text: string;
+};
+
 export type RewriteGroup = {
   element: string;
   variants: string[];
 };
 
 export type AgentResponse = {
-  top_fixes: string[];
+  quick_wins: string[];
   issues: string[];
   rewrites: RewriteGroup[];
   answer?: string;
+  recommendations: Recommendation[];
 };
 
 export type ChatRequest = {

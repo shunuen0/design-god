@@ -1,4 +1,4 @@
-import { Clock3, Images, Layers, Moon, Plus, Sun } from "lucide-react";
+import { Clock3, Images, Layers, Moon, SquarePen, Sun } from "lucide-react";
 import godLogo from "./o.png";
 
 type ActivePanel = "gallery" | "skills" | "history" | null;
@@ -24,7 +24,7 @@ export function Sidebar({ activePanel, theme, onNewChat, onToggleHistory, onTogg
       </div>
 
       <div className="sidebar-actions">
-        <SidebarButton icon={<Plus size={18} strokeWidth={1.75} />} label="New chat" onClick={onNewChat} />
+        <SidebarButton icon={<SquarePen size={18} strokeWidth={1.75} />} label="New chat" onClick={onNewChat} />
         <SidebarButton icon={<Clock3 size={18} strokeWidth={1.75} />} label="History" active={activePanel === "history"} onClick={onToggleHistory} />
         <SidebarButton icon={<Images size={18} strokeWidth={1.75} />} label="Gallery" active={activePanel === "gallery"} onClick={onToggleGallery} />
         <SidebarButton icon={<Layers size={18} strokeWidth={1.75} />} label="Skills" active={activePanel === "skills"} onClick={onToggleSkills} />
