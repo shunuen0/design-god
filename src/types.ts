@@ -1,10 +1,23 @@
 export type Role = "user" | "assistant";
 
+export type CodeReferenceSource = "absolute_path" | "attached_file";
+
+export type CodeReference = {
+  id: string;
+  source: CodeReferenceSource;
+  displayName: string;
+  absolutePath?: string;
+  relativePathHint?: string;
+  content?: string;
+  language?: string;
+};
+
 export type ChatMessage = {
   id: string;
   role: Role;
   text: string;
   imageDataUrls?: string[];
+  codeReferences?: CodeReference[];
   createdAt: string;
   response?: AgentResponse;
 };
@@ -32,6 +45,8 @@ export type AgentResponse = {
 
 export type ChatRequest = {
   messages: ChatMessage[];
+  sessionId?: string;
+  model?: string;
 };
 
 export type ToolCallItem = {

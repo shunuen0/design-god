@@ -1,10 +1,15 @@
 import type { AgentResponse, ChatMessage, Recommendation, RecommendationSection } from "./types";
 
-const SECTION_PATTERN = /^(?:\*\*|#{1,6}\s*)(Issues|Quick Wins|Top Fixes)(?:\*\*)?\s*$/i;
+const SECTION_PATTERN = /^(?:\*\*|#{1,6}\s*)(Issues|Quick Wins|Top Fixes|Rewrites|Consider)(?:\*\*)?\s*$/i;
 const BULLET_PATTERN = /^-\s+(.*)$/;
+// Standalone bold line — sub-section header (e.g. Rewrites element names), never continuation text
+const BOLD_HEADER_PATTERN = /^\*\*[^*]+\*\*\s*$/;
 
-function normalizeSection(raw: string): RecommendationSection {
-  return raw.toLowerCase() === "issues" ? "issues" : "quick_wins";
+function normalizeSection(raw: string): RecommendationSection | null {
+  const lower = raw.toLowerCase();
+  if (lower === "issues") return "issues";
+  if (lower === "quick wins" || lower === "top fixes") return "quick_wins";
+  return null; // Rewrites, Consider — skip entirely
 }
 
 function finalizeBullet(
@@ -33,6 +38,7 @@ export function parseAssistantResponse(text: string): AgentResponse | undefined 
   };
 
   let currentSection: RecommendationSection | null = null;
+  let skipSection = false;
   let currentBullet: string | null = null;
 
   for (const line of lines) {
@@ -40,12 +46,17 @@ export function parseAssistantResponse(text: string): AgentResponse | undefined 
     const sectionMatch = trimmed.match(SECTION_PATTERN);
     if (sectionMatch) {
       finalizeBullet(currentSection, currentBullet, buckets);
-      currentSection = normalizeSection(sectionMatch[1]);
+      const resolved = normalizeSection(sectionMatch[1]);
+      currentSection = resolved;
+      skipSection = resolved === null;
       currentBullet = null;
       continue;
     }
 
-    if (!currentSection) continue;
+    if (skipSection || !currentSection) continue;
+
+    // Standalone bold line is a sub-header (e.g. Rewrites element names) — never append to bullet
+    if (BOLD_HEADER_PATTERN.test(trimmed)) continue;
 
     const bulletMatch = trimmed.match(BULLET_PATTERN);
     if (bulletMatch) {

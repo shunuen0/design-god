@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
+import { resolveRepoContext, type ResolvedRepoContext } from "./repoContext.js";
 
 const OPENAI_MODELS = new Set(["gpt-4o", "gpt-4o-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "o3", "o4-mini"]);
 
@@ -23,16 +24,27 @@ fs.mkdirSync(claudeHome, { recursive: true });
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
 
+const codeReferenceSchema = z.object({
+  id: z.string(),
+  source: z.union([z.literal("absolute_path"), z.literal("attached_file")]),
+  displayName: z.string(),
+  absolutePath: z.string().optional(),
+  relativePathHint: z.string().optional(),
+  content: z.string().optional(),
+  language: z.string().optional(),
+});
+
+const chatMessageSchema = z.object({
+  id: z.string(),
+  role: z.union([z.literal("user"), z.literal("assistant")]),
+  text: z.string(),
+  imageDataUrls: z.array(z.string()).optional(),
+  codeReferences: z.array(codeReferenceSchema).optional(),
+  createdAt: z.string(),
+});
+
 const requestSchema = z.object({
-  messages: z.array(
-    z.object({
-      id: z.string(),
-      role: z.union([z.literal("user"), z.literal("assistant")]),
-      text: z.string(),
-      imageDataUrls: z.array(z.string()).optional(),
-      createdAt: z.string()
-    })
-  ),
+  messages: z.array(chatMessageSchema),
   sessionId: z.string().optional(),
   model: z.string().optional()
 });
@@ -95,7 +107,16 @@ Formatting rules:
 - If there is no image, focus on copy, tone, structure, and flow.
 - If there is an image, critique layout, density, type scale, alignment, color, contrast, and CTA visibility.
 - If you used web search, end with a **Sources** section of markdown links. Only include sources you actually cited.
-- Never mention Claude, Anthropic, Claude Code, the Agent SDK, or any underlying infrastructure. You are Design God — that is the only identity you have.`;
+- Never mention Claude, Anthropic, Claude Code, the Agent SDK, or any underlying infrastructure. You are Design God — that is the only identity you have.
+- Do not comment on code quality, code architecture, naming conventions, or engineering best practices unless the user explicitly asks. Your role is design — visual, interaction, and UX. Stay in your lane.`;
+
+const codeAwarePromptAddendum = `When trusted implementation context is provided:
+- Inspect the referenced code before making implementation claims.
+- Treat declared code values as the source of truth for spacing, typography, tokens, colors, and component structure.
+- Do not recommend changing a value to something the referenced code already uses.
+- If the provided files are insufficient to confirm a detail, say that directly instead of guessing.
+- Prefer citing the relevant file path when grounding a critique.
+- Do not critique code structure, variable naming, or implementation patterns — only use the code to ground design observations.`;
 
 function dataUrlParts(dataUrl: string) {
   const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,(.+)$/);
@@ -103,13 +124,21 @@ function dataUrlParts(dataUrl: string) {
   return { mediaType: match[1], data: match[2] };
 }
 
-function toPrompt(messages: z.infer<typeof requestSchema>["messages"]) {
-  return messages
+function buildSystemPrompt(codeContext: ResolvedRepoContext) {
+  if (!codeContext.enabled) return systemPrompt;
+  return `${systemPrompt}\n\n---\n\n${codeAwarePromptAddendum}`;
+}
+
+function toPrompt(messages: z.infer<typeof requestSchema>["messages"], codeContext: ResolvedRepoContext) {
+  const conversation = messages
     .map((m) => {
       const parts = [`${m.role.toUpperCase()}: ${m.text || "(no text)"}`];
       return parts.join("\n");
     })
     .join("\n\n");
+
+  if (!codeContext.enabled) return conversation;
+  return `${conversation}\n\n${codeContext.promptBlock}`;
 }
 
 function buildConversationMessages(messages: z.infer<typeof requestSchema>["messages"]) {
@@ -121,7 +150,25 @@ function buildConversationMessages(messages: z.infer<typeof requestSchema>["mess
       message.imageDataUrls?.map(() => ({
         type: "image",
       })) ?? [],
+    code_references:
+      message.codeReferences?.map((reference) => ({
+        source: reference.source,
+        display_name: reference.displayName,
+        absolute_path: reference.absolutePath,
+        relative_path_hint: reference.relativePathHint,
+        language: reference.language,
+      })) ?? [],
   }));
+}
+
+function buildCodeContextTraceAttributes(codeContext: ResolvedRepoContext) {
+  return {
+    code_context_enabled: codeContext.enabled,
+    code_reference_count: codeContext.referenceCount,
+    global_style_count: codeContext.globalStyleCount,
+    repo_root_detected: codeContext.repoRootDetected,
+    repo_roots: codeContext.repoRoots,
+  };
 }
 
 function buildAssistantMessage(text: string, toolCalls: Array<{ name?: string; input?: unknown }>) {
@@ -334,10 +381,11 @@ function beginChatTraceTurn(session: ChatTraceSession, userText: string, message
 function updateSessionConversationSnapshot(
   session: ChatTraceSession,
   messages: z.infer<typeof requestSchema>["messages"],
-  latestAssistantText?: string
+  latestAssistantText?: string,
+  promptSystem = systemPrompt
 ) {
   const transcript = [
-    { role: "system", content: systemPrompt },
+    { role: "system", content: promptSystem },
     ...buildConversationMessages(messages),
     ...(latestAssistantText ? [{ role: "assistant", content: latestAssistantText }] : []),
   ];
@@ -435,12 +483,18 @@ app.post("/api/chat/session/end", async (req, res) => {
 async function runOpenAIChat(
   model: string,
   messages: z.infer<typeof requestSchema>["messages"],
-  emit: (event: string, data: unknown) => void
+  emit: (event: string, data: unknown) => void,
+  codeContext: ResolvedRepoContext
 ): Promise<string> {
   const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  const instructions = buildSystemPrompt(codeContext);
 
   type InputItem = OpenAI.Responses.ResponseInputItem;
-  const input: InputItem[] = messages.map((m): InputItem => {
+  const input: InputItem[] = [
+    ...(codeContext.enabled
+      ? ([{ role: "user", content: codeContext.promptBlock }] satisfies InputItem[])
+      : []),
+    ...messages.map((m): InputItem => {
     if (m.role === "user" && m.imageDataUrls && m.imageDataUrls.length > 0) {
       return {
         role: "user",
@@ -455,11 +509,12 @@ async function runOpenAIChat(
       };
     }
     return { role: m.role as "user" | "assistant", content: m.text || "" };
-  });
+    })
+  ];
 
   const stream = openai.responses.stream({
     model,
-    instructions: systemPrompt,
+    instructions,
     input,
     tools: [{ type: "web_search_preview" }],
   });
@@ -497,6 +552,9 @@ app.post("/api/chat", async (req, res) => {
     const { messages, sessionId, model: requestedModel } = requestSchema.parse(req.body);
     const model = requestedModel ?? "claude-sonnet-4-6";
     const isOpenAI = OPENAI_MODELS.has(model);
+    const codeContext = resolveRepoContext(messages);
+    const codeTraceAttributes = buildCodeContextTraceAttributes(codeContext);
+    const systemForTurn = buildSystemPrompt(codeContext);
 
     if (isOpenAI && !process.env.OPENAI_API_KEY) {
       emit("error", { message: "OPENAI_API_KEY is not set." });
@@ -517,21 +575,24 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const hasImages = (latest.imageDataUrls?.length ?? 0) > 0;
-    emit("phase", { label: hasImages ? "Analyzing image…" : "Thinking…" });
+    emit("phase", { label: hasImages ? "Analyzing image…" : codeContext.enabled ? "Inspecting code…" : "Thinking…" });
 
     if (isOpenAI) {
-      const text = await runOpenAIChat(model, messages, emit);
+      const text = await runOpenAIChat(model, messages, emit, codeContext);
       emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
       res.end();
       return;
     }
 
-    const prompt = toPrompt(messages);
+    const prompt = toPrompt(messages, codeContext);
     const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
     const activeSessionId = sessionId ?? crypto.randomUUID();
     const traceSession = getOrCreateChatTraceSession(activeSessionId, latest.text ?? "", messages.length);
     const turnIndex = beginChatTraceTurn(traceSession, latest.text ?? "", messages.length, hasImages);
-    updateSessionConversationSnapshot(traceSession, messages);
+    runWithSessionSpan(traceSession, () => {
+      setSessionSpanMetadata(traceSession, undefined, undefined, codeTraceAttributes);
+    });
+    updateSessionConversationSnapshot(traceSession, messages, undefined, systemForTurn);
 
     const text = await runWithSessionSpan(traceSession, async () => {
       const runQuery = Tracer.observe(async function designGodRun(userText: string): Promise<string> {
@@ -543,6 +604,7 @@ app.post("/api/chat", async (req, res) => {
           turn_index: turnIndex,
           has_images: hasImages,
           message_count: messages.length,
+          ...codeTraceAttributes,
         });
 
         const sdkMessages: SDKMessage[] = [];
@@ -553,7 +615,7 @@ app.post("/api/chat", async (req, res) => {
         for await (const message of query({
           prompt: images.length > 0 ? createUserMessageStream(prompt, activeSessionId, images) : prompt,
           options: {
-            customSystemPrompt: systemPrompt,
+            customSystemPrompt: systemForTurn,
             allowedTools: ["Skill", "WebSearch"],
             env: { ...process.env, HOME: claudeHome }
           }
@@ -570,9 +632,17 @@ app.post("/api/chat", async (req, res) => {
             await Tracer.observe(async function llmTurn() {
               const inputPayload = {
                 format: "chat_conversation",
-                system: systemPrompt,
+                system: systemForTurn,
                 messages: buildConversationMessages(messages),
                 tools: ["Skill", "WebSearch"],
+                code_context:
+                  codeContext.enabled
+                    ? {
+                        reference_count: codeContext.referenceCount,
+                        global_style_count: codeContext.globalStyleCount,
+                        repo_roots: codeContext.repoRoots,
+                      }
+                    : undefined,
               };
               const outputPayload = {
                 format: "chat_conversation",
@@ -633,7 +703,7 @@ app.post("/api/chat", async (req, res) => {
 
         // Explicit output on the root span for Judgment trace display
         Tracer.setOutput(finalText);
-        updateSessionConversationSnapshot(traceSession, messages, finalText);
+        updateSessionConversationSnapshot(traceSession, messages, finalText, systemForTurn);
         return finalText;
       }, "function");
 

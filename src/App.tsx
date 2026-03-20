@@ -1,13 +1,14 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Paperclip, ArrowUp, Square, Search, FileText, Terminal, Globe, Zap, Images, X, Check, Copy } from "lucide-react";
+import { Paperclip, ArrowUp, Square, Search, FileText, Terminal, Globe, Zap, Images, X, Check, Copy, Code2 } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { buildCodingPrompt, hydrateAssistantResponses } from "./assistantResponse";
+import { ATTACHMENT_ACCEPT, dedupeCodeReferences, extractAbsolutePathReferences, fileToCodeReference, isCodeLikeFile, isImageFile } from "./codeReferences";
 import { HistoryPanel } from "./HistoryPanel";
 import { Sidebar } from "./Sidebar";
 import { SkillsPanel } from "./SkillsPanel";
 import { buildChatThread, getChatThread, listChatThreads, saveChatThread, summarizeChatThread } from "./chatHistory";
 import { useTheme } from "./useTheme";
-import type { ChatMessage, ChatThreadSummary, GalleryItem, Recommendation, ToolCallItem } from "./types";
+import type { ChatMessage, ChatThreadSummary, CodeReference, GalleryItem, Recommendation, ToolCallItem } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787/api/chat";
 const PREVIEW_URL = API_URL.replace(/\/api\/chat$/, "/api/preview");
@@ -90,6 +91,49 @@ function UserBubble({ text }: { text: string }) {
   );
 }
 
+function CodeReferenceList({
+  references,
+  onRemove,
+  compact = false,
+}: {
+  references: CodeReference[];
+  onRemove?: (referenceId: string) => void;
+  compact?: boolean;
+}) {
+  return (
+    <div className={`code-reference-list${compact ? " compact" : ""}`}>
+      {references.map((reference) => {
+        const pathLabel = reference.relativePathHint || reference.absolutePath || reference.displayName;
+        const sourceLabel = reference.source === "absolute_path" ? "Absolute path" : "Attached file";
+
+        return (
+          <div key={reference.id} className="code-reference-chip">
+            <div className="code-reference-chip-copy">
+              <span className="code-reference-chip-icon" aria-hidden="true">
+                <Code2 size={13} strokeWidth={1.85} />
+              </span>
+              <span className="code-reference-chip-text">
+                <span className="code-reference-chip-name">{reference.displayName}</span>
+                <span className="code-reference-chip-meta">{sourceLabel} · {pathLabel}</span>
+              </span>
+            </div>
+            {onRemove ? (
+              <button
+                type="button"
+                className="code-reference-chip-remove"
+                onClick={() => onRemove(reference.id)}
+                aria-label={`Remove ${reference.displayName}`}
+              >
+                <X size={11} strokeWidth={2.4} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function toolIcon(name: string) {
   const n = name.toLowerCase();
   if (n.includes("read") || n.includes("file")) return <FileText size={13} />;
@@ -122,6 +166,7 @@ function AssistantMessageCard({ message, sourceMessage }: { message: ChatMessage
   const recommendations = message.response?.recommendations ?? [];
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">("idle");
+  const [editedPrompt, setEditedPrompt] = useState("");
 
   const selectedRecommendations = useMemo(
     () => recommendations.filter((recommendation) => selectedIds.includes(recommendation.id)),
@@ -137,6 +182,10 @@ function AssistantMessageCard({ message, sourceMessage }: { message: ChatMessage
     });
   }, [message.text, selectedRecommendations, sourceMessage]);
 
+  useEffect(() => {
+    setEditedPrompt(implementationPrompt);
+  }, [implementationPrompt]);
+
   function toggleRecommendation(recommendation: Recommendation) {
     setSelectedIds((current) =>
       current.includes(recommendation.id)
@@ -147,10 +196,10 @@ function AssistantMessageCard({ message, sourceMessage }: { message: ChatMessage
   }
 
   async function copyPrompt() {
-    if (!implementationPrompt) return;
+    if (!editedPrompt) return;
 
     try {
-      await navigator.clipboard.writeText(implementationPrompt);
+      await navigator.clipboard.writeText(editedPrompt);
       setCopyState("copied");
       setTimeout(() => setCopyState("idle"), 2000);
     } catch {
@@ -210,7 +259,12 @@ function AssistantMessageCard({ message, sourceMessage }: { message: ChatMessage
                   </span>
                 </button>
               </div>
-              <pre className="implementation-prompt-preview">{implementationPrompt}</pre>
+              <textarea
+                className="implementation-prompt-preview"
+                value={editedPrompt}
+                onChange={(e) => setEditedPrompt(e.target.value)}
+                spellCheck={false}
+              />
             </div>
           )}
         </section>
@@ -229,6 +283,9 @@ function MessageCard({ message, sourceMessage }: { message: ChatMessage; sourceM
               <img key={i} className="message-image" src={url} alt={`Uploaded UI ${i + 1}`} />
             ))}
           </div>
+        ) : null}
+        {message.codeReferences && message.codeReferences.length > 0 ? (
+          <CodeReferenceList references={message.codeReferences} compact />
         ) : null}
         {message.text ? <UserBubble text={message.text} /> : null}
       </div>
@@ -473,6 +530,7 @@ export function App() {
   const [draft, setDraft] = useState("");
   const [imageDataUrls, setImageDataUrls] = useState<string[]>([]);
   const [imageNames, setImageNames] = useState<string[]>([]);
+  const [attachedCodeReferences, setAttachedCodeReferences] = useState<CodeReference[]>([]);
   const [isSending, setIsSending] = useState(false);
   const [streamingPhase, setStreamingPhase] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
@@ -555,7 +613,10 @@ export function App() {
       .catch(() => {});
   }, [activeChatCreatedAt, activeChatId, historyLoading, messages, sessionId]);
 
-  const canSend = useMemo(() => draft.trim().length > 0 || imageDataUrls.length > 0, [draft, imageDataUrls]);
+  const canSend = useMemo(
+    () => draft.trim().length > 0 || imageDataUrls.length > 0 || attachedCodeReferences.length > 0,
+    [attachedCodeReferences.length, draft, imageDataUrls.length]
+  );
 
   function endChatSession(sessionId: string, reason: string) {
     void fetch(END_SESSION_URL, {
@@ -570,6 +631,7 @@ export function App() {
     setDraft("");
     setImageDataUrls([]);
     setImageNames([]);
+    setAttachedCodeReferences([]);
     setStreamingPhase(null);
     setStreamingText("");
     setToolCalls([]);
@@ -582,14 +644,29 @@ export function App() {
   }
 
   async function handleFile(file: File) {
-    const dataUrl = await fileToDataUrl(file);
-    setImageDataUrls((prev) => [...prev, dataUrl]);
-    setImageNames((prev) => [...prev, file.name]);
+    if (isImageFile(file)) {
+      const dataUrl = await fileToDataUrl(file);
+      setImageDataUrls((prev) => [...prev, dataUrl]);
+      setImageNames((prev) => [...prev, file.name]);
+      return;
+    }
+
+    if (isCodeLikeFile(file)) {
+      const codeReference = await fileToCodeReference(file);
+      setAttachedCodeReferences((prev) => dedupeCodeReferences([...prev, codeReference]));
+      return;
+    }
+
+    throw new Error(`Unsupported attachment type: ${file.name}`);
   }
 
   function removeImage(index: number) {
     setImageDataUrls((prev) => prev.filter((_, i) => i !== index));
     setImageNames((prev) => prev.filter((_, i) => i !== index));
+  }
+
+  function removeCodeReference(referenceId: string) {
+    setAttachedCodeReferences((prev) => prev.filter((reference) => reference.id !== referenceId));
   }
 
   function addGalleryItem(item: GalleryItem) {
@@ -631,11 +708,17 @@ export function App() {
     event.preventDefault();
     if (!canSend || isSending) return;
 
+    const codeReferences = dedupeCodeReferences([
+      ...attachedCodeReferences,
+      ...extractAbsolutePathReferences(draft),
+    ]);
+
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       text: draft.trim(),
       imageDataUrls: imageDataUrls.length > 0 ? [...imageDataUrls] : undefined,
+      codeReferences: codeReferences.length > 0 ? codeReferences : undefined,
       createdAt: new Date().toISOString()
     };
 
@@ -645,6 +728,7 @@ export function App() {
     if (textareaRef.current) textareaRef.current.style.height = "";
     setImageDataUrls([]);
     setImageNames([]);
+    setAttachedCodeReferences([]);
     setIsSending(true);
     setStreamingText("");
     setStreamingPhase("Thinking…");
@@ -784,9 +868,18 @@ export function App() {
             ))}
           </div>
         )}
+        {attachedCodeReferences.length > 0 && (
+          <div className="composer-code-reference-block">
+            <div className="composer-code-reference-header">
+              <span className="composer-code-reference-title">Code context</span>
+              <span className="composer-code-reference-subtitle">These files will be treated as trusted implementation context.</span>
+            </div>
+            <CodeReferenceList references={attachedCodeReferences} onRemove={removeCodeReference} />
+          </div>
+        )}
         <textarea
           ref={textareaRef}
-          placeholder="Ask anything"
+          placeholder="Ask anything, or paste absolute file paths"
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={(event) => {
@@ -802,7 +895,7 @@ export function App() {
             type="button"
             className="attach-button"
             onClick={() => fileInputRef.current?.click()}
-            title="Attach image"
+            title="Attach image or code"
           >
             <Paperclip size={16} strokeWidth={1.75} />
           </button>
@@ -810,7 +903,7 @@ export function App() {
             ref={fileInputRef}
             hidden
             type="file"
-            accept="image/*"
+            accept={ATTACHMENT_ACCEPT}
             multiple
             onChange={async (event) => {
               const files = Array.from(event.target.files ?? []);
