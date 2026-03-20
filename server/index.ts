@@ -4,9 +4,12 @@ import cors from "cors";
 import { ROOT_CONTEXT, SpanStatusCode, trace, type Context, type Span } from "@opentelemetry/api";
 import { query, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
 import { JudgmentTracerProvider, Tracer } from "judgeval";
+import OpenAI from "openai";
 import { z } from "zod";
 import path from "node:path";
 import fs from "node:fs";
+
+const OPENAI_MODELS = new Set(["gpt-4o", "gpt-4o-mini", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "o3", "o4-mini"]);
 
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
@@ -30,7 +33,8 @@ const requestSchema = z.object({
       createdAt: z.string()
     })
   ),
-  sessionId: z.string().optional()
+  sessionId: z.string().optional(),
+  model: z.string().optional()
 });
 
 const endSessionSchema = z.object({
@@ -428,6 +432,54 @@ app.post("/api/chat/session/end", async (req, res) => {
   }
 });
 
+async function runOpenAIChat(
+  model: string,
+  messages: z.infer<typeof requestSchema>["messages"],
+  emit: (event: string, data: unknown) => void
+): Promise<string> {
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+  type OAIMessage = OpenAI.Chat.ChatCompletionMessageParam;
+  const chatMessages: OAIMessage[] = [
+    { role: "system", content: systemPrompt },
+    ...messages.map((m): OAIMessage => {
+      if (m.role === "user" && m.imageDataUrls && m.imageDataUrls.length > 0) {
+        return {
+          role: "user",
+          content: [
+            { type: "text", text: m.text || "" },
+            ...m.imageDataUrls.map((url) => ({
+              type: "image_url" as const,
+              image_url: { url }
+            }))
+          ]
+        };
+      }
+      return { role: m.role, content: m.text || "" };
+    })
+  ];
+
+  const stream = await openai.chat.completions.create({
+    model,
+    messages: chatMessages,
+    stream: true
+  });
+
+  let fullText = "";
+  let emittedResponding = false;
+  for await (const chunk of stream) {
+    const delta = chunk.choices[0]?.delta?.content ?? "";
+    if (delta) {
+      if (!emittedResponding) {
+        emit("phase", { label: "Responding…" });
+        emittedResponding = true;
+      }
+      fullText += delta;
+    }
+  }
+  return fullText;
+}
+
 app.post("/api/chat", async (req, res) => {
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -439,13 +491,21 @@ app.post("/api/chat", async (req, res) => {
   };
 
   try {
-    if (!process.env.ANTHROPIC_API_KEY) {
+    const { messages, sessionId, model: requestedModel } = requestSchema.parse(req.body);
+    const model = requestedModel ?? "claude-sonnet-4-6";
+    const isOpenAI = OPENAI_MODELS.has(model);
+
+    if (isOpenAI && !process.env.OPENAI_API_KEY) {
+      emit("error", { message: "OPENAI_API_KEY is not set." });
+      res.end();
+      return;
+    }
+    if (!isOpenAI && !process.env.ANTHROPIC_API_KEY) {
       emit("error", { message: "ANTHROPIC_API_KEY is not set." });
       res.end();
       return;
     }
 
-    const { messages, sessionId } = requestSchema.parse(req.body);
     const latest = [...messages].reverse().find((m) => m.role === "user");
     if (!latest) {
       emit("error", { message: "A user message is required." });
@@ -455,6 +515,13 @@ app.post("/api/chat", async (req, res) => {
 
     const hasImages = (latest.imageDataUrls?.length ?? 0) > 0;
     emit("phase", { label: hasImages ? "Analyzing image…" : "Thinking…" });
+
+    if (isOpenAI) {
+      const text = await runOpenAIChat(model, messages, emit);
+      emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
+      res.end();
+      return;
+    }
 
     const prompt = toPrompt(messages);
     const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];

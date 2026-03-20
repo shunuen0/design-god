@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, ArrowUp, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
+import { Paperclip, ArrowUp, Square, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
 import { Streamdown } from "streamdown";
 import { HistoryPanel } from "./HistoryPanel";
 import { Sidebar } from "./Sidebar";
@@ -303,21 +303,86 @@ function GalleryPanel({
   );
 }
 
+const MODELS = [
+  { id: "claude-sonnet-4-6",   label: "Sonnet 4.6",    provider: "claude" },
+  { id: "claude-opus-4-5",     label: "Opus 4.5",      provider: "claude" },
+  { id: "gpt-5.4",             label: "GPT-5.4",        provider: "openai" },
+  { id: "gpt-5.4-mini",        label: "GPT-5.4 mini",   provider: "openai" },
+  { id: "gpt-5.4-nano",        label: "GPT-5.4 nano",   provider: "openai" },
+  { id: "gpt-4o",              label: "GPT-4o",         provider: "openai" },
+] as const;
+
+function ModelPicker({ model, onChange }: { model: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const current = MODELS.find((m) => m.id === model) ?? MODELS[0];
+
+  useEffect(() => {
+    if (!open) return;
+    function handleMouseDown(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleMouseDown);
+    return () => document.removeEventListener("mousedown", handleMouseDown);
+  }, [open]);
+
+  return (
+    <div className="model-picker" ref={ref}>
+      <button
+        type="button"
+        className="model-picker-btn"
+        onClick={() => setOpen((v) => !v)}
+        aria-label="Switch model"
+      >
+        <span className="model-picker-provider">{current.provider === "openai" ? "OpenAI" : "Claude"}</span>
+        <span className="model-picker-label">{current.label}</span>
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" aria-hidden>
+          <path d="M2.5 4L5 6.5L7.5 4" stroke="currentColor" strokeWidth="1.25" strokeLinecap="round" strokeLinejoin="round"/>
+        </svg>
+      </button>
+      {open && (
+        <div className="model-menu" role="menu">
+          {(["claude", "openai"] as const).map((provider) => (
+            <div key={provider} className="model-menu-group">
+              {MODELS.filter((m) => m.provider === provider).map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  role="menuitem"
+                  className={`model-menu-item${m.id === model ? " active" : ""}`}
+                  onClick={() => { onChange(m.id); setOpen(false); }}
+                >
+                  {m.label}
+                  {m.id === model && (
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden>
+                      <path d="M2 6L5 9L10 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                    </svg>
+                  )}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function App() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [draft, setDraft] = useState("");
   const [imageDataUrls, setImageDataUrls] = useState<string[]>([]);
   const [imageNames, setImageNames] = useState<string[]>([]);
   const [isSending, setIsSending] = useState(false);
-  const [isMultiLine, setIsMultiLine] = useState(false);
-  const [expandedClass, setExpandedClass] = useState(false);
-  const collapseTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [streamingPhase, setStreamingPhase] = useState<string | null>(null);
   const [streamingText, setStreamingText] = useState("");
   const [toolCalls, setToolCalls] = useState<ToolCallItem[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const animationRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(() => {
     try { return JSON.parse(localStorage.getItem("design-god-gallery") ?? "[]"); } catch { return []; }
   });
@@ -329,6 +394,8 @@ export function App() {
   const [activeChatId, setActiveChatId] = useState<string>(() => crypto.randomUUID());
   const [activeChatCreatedAt, setActiveChatCreatedAt] = useState(() => new Date().toISOString());
   const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const [model, setModel] = useState<string>(() => localStorage.getItem("design-god-model") ?? "claude-sonnet-4-6");
+  function changeModel(id: string) { setModel(id); localStorage.setItem("design-god-model", id); }
   const { theme, toggle: toggleTheme } = useTheme();
 
   const activePanel = showHistory ? "history" : showSkills ? "skills" : showGallery ? "gallery" : null;
@@ -409,23 +476,10 @@ export function App() {
     setStreamingText("");
     setToolCalls([]);
     setIsSending(false);
-    applyMultiLine(false);
-    if (textareaRef.current) textareaRef.current.style.height = "32px";
+    if (textareaRef.current) textareaRef.current.style.height = "";
     if (animationRef.current) {
       clearInterval(animationRef.current);
       animationRef.current = null;
-    }
-  }
-
-  function applyMultiLine(value: boolean) {
-    clearTimeout(collapseTimerRef.current);
-    if (value) {
-      setIsMultiLine(true);
-      setExpandedClass(true);
-    } else {
-      setIsMultiLine(false);
-      // Delay removing the expanded class so buttons can fade out first
-      collapseTimerRef.current = setTimeout(() => setExpandedClass(false), 150);
     }
   }
 
@@ -490,8 +544,7 @@ export function App() {
     const nextMessages = [...messages, userMessage];
     setMessages(nextMessages);
     setDraft("");
-    applyMultiLine(false);
-    if (textareaRef.current) textareaRef.current.style.height = "32px";
+    if (textareaRef.current) textareaRef.current.style.height = "";
     setImageDataUrls([]);
     setImageNames([]);
     setIsSending(true);
@@ -500,11 +553,15 @@ export function App() {
     setToolCalls([]);
     if (animationRef.current) clearInterval(animationRef.current);
 
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       const res = await fetch(API_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ messages: nextMessages, sessionId })
+        body: JSON.stringify({ messages: nextMessages, sessionId, model }),
+        signal: abortController.signal,
       });
 
       if (!res.ok || !res.body) throw new Error(`Request failed with ${res.status}`);
@@ -569,14 +626,19 @@ export function App() {
       setStreamingText("");
       setStreamingPhase(null);
       setToolCalls([]);
-      const failure: ChatMessage = {
-        id: crypto.randomUUID(),
-        role: "assistant",
-        text: `Something went wrong: ${error instanceof Error ? error.message : "Unknown error"}`,
-        createdAt: new Date().toISOString()
-      };
-      setMessages((current) => [...current, failure]);
+      if (error instanceof Error && error.name === "AbortError") {
+        // user stopped — discard silently
+      } else {
+        const failure: ChatMessage = {
+          id: crypto.randomUUID(),
+          role: "assistant",
+          text: `Something went wrong: ${error instanceof Error ? error.message : "Unknown error"}`,
+          createdAt: new Date().toISOString()
+        };
+        setMessages((current) => [...current, failure]);
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsSending(false);
     }
   }
@@ -598,7 +660,7 @@ export function App() {
         }
       }}
     >
-      <div className={`composer-box${imageDataUrls.length > 0 || expandedClass ? " expanded" : ""}${expandedClass && !isMultiLine && imageDataUrls.length === 0 ? " collapsing" : ""}`}>
+      <div className="composer-box">
         {imageDataUrls.length > 0 && (
           <div className="image-preview-row">
             {imageDataUrls.map((url, i) => (
@@ -616,14 +678,27 @@ export function App() {
             ))}
           </div>
         )}
-        <div className="composer-input-row">
+        <textarea
+          ref={textareaRef}
+          placeholder="Ask anything"
+          value={draft}
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
+              event.preventDefault();
+              handleSubmit(event as unknown as FormEvent);
+            }
+          }}
+          rows={1}
+        />
+        <div className="composer-toolbar">
           <button
             type="button"
             className="attach-button"
             onClick={() => fileInputRef.current?.click()}
             title="Attach image"
           >
-            <Plus size={20} strokeWidth={1.75} />
+            <Paperclip size={16} strokeWidth={1.75} />
           </button>
           <input
             ref={fileInputRef}
@@ -637,33 +712,22 @@ export function App() {
               event.target.value = "";
             }}
           />
-          <textarea
-            ref={textareaRef}
-            placeholder="Ask anything"
-            value={draft}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              const el = event.target;
-              const prev = el.offsetHeight;
-              el.style.height = "auto";
-              const next = el.scrollHeight;
-              el.style.height = `${prev}px`;
-              void el.offsetHeight; // force reflow so transition fires
-              el.style.height = `${next}px`;
-              const lineHeight = parseFloat(getComputedStyle(el).lineHeight);
-              applyMultiLine(next > lineHeight * 1.5);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && !event.shiftKey) {
-                event.preventDefault();
-                handleSubmit(event as unknown as FormEvent);
-              }
-            }}
-            rows={1}
-          />
-          <button className="send-button" type="submit" disabled={!canSend || isSending}>
-            {isSending ? "…" : <ArrowUp size={16} strokeWidth={2.5} />}
-          </button>
+          <ModelPicker model={model} onChange={changeModel} />
+          <div style={{ flex: 1 }} />
+          {isSending ? (
+            <button
+              type="button"
+              className="send-button stop-button"
+              onClick={() => abortControllerRef.current?.abort()}
+              aria-label="Stop"
+            >
+              <Square size={12} fill="currentColor" strokeWidth={0} />
+            </button>
+          ) : (
+            <button className="send-button" type="submit" disabled={!canSend}>
+              <ArrowUp size={16} strokeWidth={2.5} />
+            </button>
+          )}
         </div>
       </div>
     </form>

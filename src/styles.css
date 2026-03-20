@@ -814,15 +814,10 @@ html.dark .skill-badge.local {
   display: flex;
   flex-direction: column;
   border: none;
-  border-radius: 999px;
-  padding: 10px 10px 10px 16px;
+  border-radius: 20px;
+  padding: 12px 10px 10px 16px;
   background: var(--surface);
   box-shadow: var(--shadow-sm);
-  transition: border-radius 200ms cubic-bezier(0.23, 1, 0.32, 1);
-}
-
-.composer-box.expanded {
-  border-radius: 20px;
 }
 
 .image-preview-row {
@@ -833,58 +828,11 @@ html.dark .skill-badge.local {
   animation: preview-in 200ms cubic-bezier(0.23, 1, 0.32, 1) both;
 }
 
-.composer-input-row {
+.composer-toolbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  flex: 1;
-}
-
-/* Multi-line: textarea spans full width on top, buttons on their own row below */
-.composer-box.expanded .composer-input-row textarea {
-  order: -1;
-  flex-basis: 100%;
-}
-
-.composer-box.expanded .send-button {
-  margin-left: auto;
-}
-
-/* Buttons enter: staggered, scale + translate */
-.composer-box.expanded:not(.collapsing) .attach-button {
-  animation: btn-enter 220ms cubic-bezier(0.23, 1, 0.32, 1) both;
-}
-.composer-box.expanded:not(.collapsing) .send-button {
-  animation: btn-enter 220ms cubic-bezier(0.23, 1, 0.32, 1) 30ms both;
-}
-
-/* Buttons exit: fast ease-out — starts moving immediately, no sluggish delay */
-.composer-box.collapsing .attach-button,
-.composer-box.collapsing .send-button {
-  animation: btn-leave 140ms cubic-bezier(0.23, 1, 0.32, 1) forwards;
-}
-
-@keyframes btn-enter {
-  from {
-    opacity: 0;
-    transform: translateY(5px) scale(0.96);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-@keyframes btn-leave {
-  from {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-  to {
-    opacity: 0;
-    transform: translateY(-3px) scale(0.97);
-  }
+  gap: 4px;
+  padding-top: 14px;
 }
 
 .image-preview-thumb {
@@ -957,24 +905,23 @@ html.dark .skill-badge.local {
 }
 
 .composer-box textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   border: none;
-  padding: 4px 0;
+  padding: 0;
   margin: 0;
   background: transparent;
   color: inherit;
   outline: none;
   font-size: 1rem;
   line-height: 1.5;
-  min-height: 32px;
+  min-height: 24px;
   max-height: 160px;
   overflow-x: hidden;
   overflow-y: auto;
   overflow-wrap: break-word;
   word-break: break-word;
   field-sizing: content;
-  transition: height 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 .composer-box textarea::placeholder {
@@ -999,6 +946,130 @@ html.dark .skill-badge.local {
 .send-button:disabled {
   opacity: 0.25;
   cursor: not-allowed;
+}
+
+.stop-button:hover {
+  opacity: 0.75;
+}
+
+/* Model picker */
+
+.model-picker {
+  position: relative;
+}
+
+.model-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  padding: 0 6px;
+  height: 28px;
+  border-radius: 8px;
+  color: var(--fg-muted);
+  font-size: 0.85rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  transition: background 140ms ease-out, color 140ms ease-out;
+  white-space: nowrap;
+}
+
+.model-picker-btn:hover {
+  color: var(--fg);
+}
+
+.model-picker-btn:hover .model-picker-provider,
+.model-picker-btn:hover .model-picker-label {
+  color: inherit;
+}
+
+.model-picker-provider {
+  color: var(--fg-subtle);
+  font-weight: 400;
+  transition: color 140ms ease-out;
+}
+
+.model-picker-label {
+  color: var(--fg-muted);
+  transition: color 140ms ease-out;
+}
+
+.model-menu-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+}
+
+.model-menu {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  left: 0;
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: 14px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+  min-width: 160px;
+  overflow: hidden;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  animation: model-menu-in 140ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@keyframes model-menu-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to   { opacity: 1; transform: translateY(0)   scale(1);    }
+}
+
+.model-menu-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.model-menu-group + .model-menu-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--border-light);
+}
+
+.model-menu-group-label {
+  font-size: 0.63rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--fg-subtle);
+  padding: 2px 10px 3px;
+}
+
+.model-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 450;
+  color: var(--fg);
+  padding: 7px 10px;
+  border-radius: 8px;
+  transition: background 120ms ease-out;
+}
+
+.model-menu-item:hover {
+  background: var(--surface-hover);
+}
+
+.model-menu-item.active {
+  color: var(--fg-strong);
+  font-weight: 500;
 }
 
 /* Thinking indicator */
