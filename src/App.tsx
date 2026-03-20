@@ -1,9 +1,12 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { Plus, ArrowUp, Search, FileText, Terminal, Globe, Zap, Images, X } from "lucide-react";
 import { Streamdown } from "streamdown";
+import { HistoryPanel } from "./HistoryPanel";
 import { Sidebar } from "./Sidebar";
 import { SkillsPanel } from "./SkillsPanel";
-import type { ChatMessage, GalleryItem, ToolCallItem } from "./types";
+import { buildChatThread, getChatThread, listChatThreads, saveChatThread, summarizeChatThread } from "./chatHistory";
+import { useTheme } from "./useTheme";
+import type { ChatMessage, ChatThreadSummary, GalleryItem, ToolCallItem } from "./types";
 
 const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787/api/chat";
 const PREVIEW_URL = API_URL.replace(/\/api\/chat$/, "/api/preview");
@@ -104,7 +107,7 @@ function ThinkingIndicator({ phase, toolCalls }: { phase: string; toolCalls: Too
           {toolCalls.map((tc) => (
             <li key={tc.id} className="tool-call-item">
               <span className="tool-call-icon">{toolIcon(tc.name)}</span>
-              <span className="tool-call-name">{tc.name}</span>
+              <span className={`tool-call-name${tc.result ? "" : " pending"}`}>{tc.name}</span>
               {tc.result && <span className="tool-call-result">"{tc.result}"</span>}
             </li>
           ))}
@@ -132,7 +135,7 @@ function MessageCard({ message }: { message: ChatMessage }) {
 
   return (
     <article className="message-card assistant">
-      <Streamdown>{message.text}</Streamdown>
+      <Streamdown linkSafety={false}>{message.text}</Streamdown>
     </article>
   );
 }
@@ -318,15 +321,74 @@ export function App() {
   const [galleryItems, setGalleryItems] = useState<GalleryItem[]>(() => {
     try { return JSON.parse(localStorage.getItem("design-god-gallery") ?? "[]"); } catch { return []; }
   });
+  const [historyThreads, setHistoryThreads] = useState<ChatThreadSummary[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [showHistory, setShowHistory] = useState(false);
   const [showGallery, setShowGallery] = useState(false);
   const [showSkills, setShowSkills] = useState(false);
-  const [sessionId, setSessionId] = useState(() => crypto.randomUUID());
+  const [activeChatId, setActiveChatId] = useState<string>(() => crypto.randomUUID());
+  const [activeChatCreatedAt, setActiveChatCreatedAt] = useState(() => new Date().toISOString());
+  const [sessionId, setSessionId] = useState<string>(() => crypto.randomUUID());
+  const { theme, toggle: toggleTheme } = useTheme();
 
-  const activePanel = showSkills ? "skills" : showGallery ? "gallery" : null;
+  const activePanel = showHistory ? "history" : showSkills ? "skills" : showGallery ? "gallery" : null;
 
   useEffect(() => {
     localStorage.setItem("design-god-gallery", JSON.stringify(galleryItems));
   }, [galleryItems]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function hydrateHistory() {
+      try {
+        const threads = await listChatThreads();
+        if (cancelled) return;
+
+        setHistoryThreads(threads);
+
+        if (threads.length > 0) {
+          const latestThread = await getChatThread(threads[0].id);
+          if (!latestThread || cancelled) return;
+
+          setActiveChatId(latestThread.id);
+          setActiveChatCreatedAt(latestThread.createdAt);
+          setSessionId(latestThread.sessionId);
+          setMessages(latestThread.messages);
+        }
+      } finally {
+        if (!cancelled) setHistoryLoading(false);
+      }
+    }
+
+    void hydrateHistory();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (historyLoading || messages.length === 0) return;
+
+    const updatedAt = new Date().toISOString();
+    const thread = buildChatThread({
+      id: activeChatId,
+      sessionId,
+      createdAt: activeChatCreatedAt,
+      messages,
+    }, updatedAt);
+
+    void saveChatThread(thread)
+      .then((savedThread) => {
+        const summary = summarizeChatThread(savedThread);
+        setHistoryThreads((current) =>
+          [summary, ...current.filter((item) => item.id !== summary.id)].sort((left, right) =>
+            right.updatedAt.localeCompare(left.updatedAt)
+          )
+        );
+      })
+      .catch(() => {});
+  }, [activeChatCreatedAt, activeChatId, historyLoading, messages, sessionId]);
 
   const canSend = useMemo(() => draft.trim().length > 0 || imageDataUrls.length > 0, [draft, imageDataUrls]);
 
@@ -337,6 +399,22 @@ export function App() {
       body: JSON.stringify({ sessionId, reason }),
       keepalive: true
     }).catch(() => {});
+  }
+
+  function resetTransientState() {
+    setDraft("");
+    setImageDataUrls([]);
+    setImageNames([]);
+    setStreamingPhase(null);
+    setStreamingText("");
+    setToolCalls([]);
+    setIsSending(false);
+    applyMultiLine(false);
+    if (textareaRef.current) textareaRef.current.style.height = "32px";
+    if (animationRef.current) {
+      clearInterval(animationRef.current);
+      animationRef.current = null;
+    }
   }
 
   function applyMultiLine(value: boolean) {
@@ -372,15 +450,29 @@ export function App() {
 
   function startNewChat() {
     endChatSession(sessionId, "new_chat");
+    resetTransientState();
     setMessages([]);
-    setDraft("");
-    setImageDataUrls([]);
-    setImageNames([]);
-    setStreamingPhase(null);
-    setStreamingText("");
-    setToolCalls([]);
+    setShowHistory(false);
+    setShowGallery(false);
+    setShowSkills(false);
+    setActiveChatId(crypto.randomUUID());
+    setActiveChatCreatedAt(new Date().toISOString());
     setSessionId(crypto.randomUUID());
-    if (animationRef.current) { clearInterval(animationRef.current); animationRef.current = null; }
+  }
+
+  async function openChatThread(threadId: string) {
+    const thread = await getChatThread(threadId);
+    if (!thread) return;
+
+    endChatSession(sessionId, "history_switch");
+    resetTransientState();
+    setMessages(thread.messages);
+    setActiveChatId(thread.id);
+    setActiveChatCreatedAt(thread.createdAt);
+    setSessionId(thread.sessionId);
+    setShowHistory(false);
+    setShowGallery(false);
+    setShowSkills(false);
   }
 
   async function handleSubmit(event: FormEvent) {
@@ -580,14 +672,26 @@ export function App() {
   const sidebar = (
     <Sidebar
       activePanel={activePanel}
+      theme={theme}
       onNewChat={startNewChat}
-      onToggleGallery={() => { setShowGallery(v => !v); setShowSkills(false); }}
-      onToggleSkills={() => { setShowSkills(v => !v); setShowGallery(false); }}
+      onToggleHistory={() => { setShowHistory(v => !v); setShowGallery(false); setShowSkills(false); }}
+      onToggleGallery={() => { setShowGallery(v => !v); setShowHistory(false); setShowSkills(false); }}
+      onToggleSkills={() => { setShowSkills(v => !v); setShowHistory(false); setShowGallery(false); }}
+      onToggleTheme={toggleTheme}
     />
   );
 
   const panels = (
     <>
+      {showHistory && (
+        <HistoryPanel
+          threads={historyThreads}
+          activeChatId={activeChatId}
+          loading={historyLoading}
+          onClose={() => setShowHistory(false)}
+          onSelect={(threadId) => { void openChatThread(threadId); }}
+        />
+      )}
       {showGallery && (
         <GalleryPanel
           items={galleryItems}
@@ -630,7 +734,7 @@ export function App() {
           )}
           {streamingText && (
             <article className="message-card assistant">
-              <Streamdown mode="streaming" animated caret="block">
+              <Streamdown mode="streaming" animated caret="block" linkSafety={false}>
                 {streamingText}
               </Streamdown>
             </article>

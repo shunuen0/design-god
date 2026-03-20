@@ -40,3 +40,22 @@ export type StreamingState = {
   phase: string;
   toolCalls: ToolCallItem[];
 };
+
+export type ChatThread = {
+  id: string;
+  sessionId: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ChatMessage[];
+};
+
+export type ChatThreadSummary = {
+  id: string;
+  sessionId: string;
+  title: string;
+  preview: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+};
