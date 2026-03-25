@@ -15,5 +15,8 @@ dist-server/
 .claude-home/
 .claude-home-test/
 
+# Simulator results (generated output)
+simulator/results/
+
 # OS
 .DS_Store

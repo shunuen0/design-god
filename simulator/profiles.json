@@ -1,0 +1,326 @@
+[
+  {
+    "id": "beginner-ecstatic-landing",
+    "skill_level": 0,
+    "emotion": "ecstatic",
+    "emotion_intensity": 0.9,
+    "domain": "landing_page",
+    "question_type": "how_to",
+    "context": "Just decided to build their first website for a side project. Has zero design background but is incredibly excited about it."
+  },
+  {
+    "id": "beginner-anxious-portfolio",
+    "skill_level": 0,
+    "emotion": "anxious",
+    "emotion_intensity": 0.8,
+    "domain": "portfolio",
+    "question_type": "validation",
+    "context": "Applying for jobs and trying to build a portfolio site. Terrified it looks amateur but doesn't know what to fix."
+  },
+  {
+    "id": "beginner-defeated-ecommerce",
+    "skill_level": 1,
+    "emotion": "defeated",
+    "emotion_intensity": 0.9,
+    "domain": "ecommerce",
+    "question_type": "diagnosis",
+    "context": "Built a Shopify store that gets traffic but zero conversions. Has tried everything they can think of and is ready to give up."
+  },
+  {
+    "id": "hobbyist-enthusiastic-social",
+    "skill_level": 1,
+    "emotion": "enthusiastic",
+    "emotion_intensity": 0.7,
+    "domain": "social",
+    "question_type": "how_to",
+    "context": "Watches tons of design YouTube. Building a social app for fun and wants to learn proper design thinking."
+  },
+  {
+    "id": "hobbyist-frustrated-mobile",
+    "skill_level": 1,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.7,
+    "domain": "mobile",
+    "question_type": "diagnosis",
+    "context": "Their mobile app UI 'looks fine' but everyone says it feels off. Can't figure out what's wrong."
+  },
+  {
+    "id": "bootcamp-neutral-saas",
+    "skill_level": 2,
+    "emotion": "neutral",
+    "emotion_intensity": 0.3,
+    "domain": "saas",
+    "question_type": "best_practice",
+    "context": "Midway through a UX bootcamp. Working on a SaaS dashboard project and wants to nail the fundamentals."
+  },
+  {
+    "id": "bootcamp-anxious-critique",
+    "skill_level": 2,
+    "emotion": "anxious",
+    "emotion_intensity": 0.8,
+    "domain": "saas",
+    "question_type": "critique",
+    "context": "Portfolio review is tomorrow. Needs honest feedback on their SaaS settings page but is scared to hear it."
+  },
+  {
+    "id": "bootcamp-angry-comparison",
+    "skill_level": 2,
+    "emotion": "angry",
+    "emotion_intensity": 0.6,
+    "domain": "mobile",
+    "question_type": "comparison",
+    "context": "Got conflicting feedback from two mentors about their navigation pattern. Annoyed and confused about who to listen to."
+  },
+  {
+    "id": "junior-enthusiastic-design-system",
+    "skill_level": 3,
+    "emotion": "enthusiastic",
+    "emotion_intensity": 0.8,
+    "domain": "design_system",
+    "question_type": "best_practice",
+    "context": "First design job, 3 months in. Been asked to start a component library and is excited but unsure where to begin."
+  },
+  {
+    "id": "junior-anxious-validation",
+    "skill_level": 3,
+    "emotion": "anxious",
+    "emotion_intensity": 0.9,
+    "domain": "saas",
+    "question_type": "validation",
+    "context": "About to present a redesign to their lead. Has imposter syndrome and wants reassurance their decisions make sense."
+  },
+  {
+    "id": "junior-frustrated-copy",
+    "skill_level": 3,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.6,
+    "domain": "fintech",
+    "question_type": "copy_review",
+    "context": "Struggling with error messages for a payment flow. The copy keeps getting rejected by the PM for being 'too technical'."
+  },
+  {
+    "id": "junior-hostile-roast",
+    "skill_level": 3,
+    "emotion": "hostile",
+    "emotion_intensity": 0.7,
+    "domain": "landing_page",
+    "question_type": "roast",
+    "context": "A competitor copied their landing page design and it somehow looks better. Pissed off and wants brutal feedback on what they're doing wrong."
+  },
+  {
+    "id": "mid-neutral-saas",
+    "skill_level": 4,
+    "emotion": "neutral",
+    "emotion_intensity": 0.2,
+    "domain": "saas",
+    "question_type": "critique",
+    "context": "Solid mid-level designer. Working on a complex data table design and wants a second pair of eyes."
+  },
+  {
+    "id": "mid-frustrated-stakeholder",
+    "skill_level": 4,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.8,
+    "domain": "healthcare",
+    "question_type": "stakeholder",
+    "context": "Their PM keeps overriding design decisions with 'the CEO wants it this way.' Needs help building a case for their approach."
+  },
+  {
+    "id": "mid-angry-ecommerce",
+    "skill_level": 4,
+    "emotion": "angry",
+    "emotion_intensity": 0.9,
+    "domain": "ecommerce",
+    "question_type": "critique",
+    "context": "Just had a design review where the senior designer tore apart their checkout flow in front of the whole team. Humiliated and furious."
+  },
+  {
+    "id": "mid-defeated-internal",
+    "skill_level": 4,
+    "emotion": "defeated",
+    "emotion_intensity": 0.7,
+    "domain": "internal_tool",
+    "question_type": "tradeoff",
+    "context": "Been redesigning an internal admin tool for 4 months. Every iteration gets mixed feedback. Starting to think it's impossible to please everyone."
+  },
+  {
+    "id": "mid-ecstatic-mobile",
+    "skill_level": 4,
+    "emotion": "ecstatic",
+    "emotion_intensity": 0.8,
+    "domain": "mobile",
+    "question_type": "best_practice",
+    "context": "Just shipped a feature that increased engagement 40%. Wants to double down and optimize the next screen in the flow."
+  },
+  {
+    "id": "senior-neutral-tradeoff",
+    "skill_level": 5,
+    "emotion": "neutral",
+    "emotion_intensity": 0.2,
+    "domain": "design_system",
+    "question_type": "tradeoff",
+    "context": "Evaluating whether to adopt a strict 4px grid or go optical. Has strong opinions but wants to pressure-test them."
+  },
+  {
+    "id": "senior-frustrated-fintech",
+    "skill_level": 5,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.7,
+    "domain": "fintech",
+    "question_type": "critique",
+    "context": "Designed a complex trading dashboard. Engineering team says it's too ambitious to build but won't suggest specific cuts."
+  },
+  {
+    "id": "senior-hostile-pushback",
+    "skill_level": 5,
+    "emotion": "hostile",
+    "emotion_intensity": 0.8,
+    "domain": "saas",
+    "question_type": "critique",
+    "context": "Got AI-generated design feedback before that was generic garbage. Expects this to be the same and is ready to call it out."
+  },
+  {
+    "id": "senior-angry-copy",
+    "skill_level": 5,
+    "emotion": "angry",
+    "emotion_intensity": 0.9,
+    "domain": "healthcare",
+    "question_type": "copy_review",
+    "context": "Legal rewrote all their carefully crafted UX copy for a patient portal to cover liability. The result is incomprehensible. Absolutely livid."
+  },
+  {
+    "id": "senior-enthusiastic-comparison",
+    "skill_level": 5,
+    "emotion": "enthusiastic",
+    "emotion_intensity": 0.6,
+    "domain": "mobile",
+    "question_type": "comparison",
+    "context": "Exploring a new interaction pattern inspired by a competitor. Genuinely curious whether it would work for their use case."
+  },
+  {
+    "id": "staff-neutral-system",
+    "skill_level": 6,
+    "emotion": "neutral",
+    "emotion_intensity": 0.1,
+    "domain": "design_system",
+    "question_type": "tradeoff",
+    "context": "Leading design system for a 200-person org. Evaluating token architecture approaches and wants a rigorous sounding board."
+  },
+  {
+    "id": "staff-frustrated-stakeholder",
+    "skill_level": 6,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.6,
+    "domain": "saas",
+    "question_type": "stakeholder",
+    "context": "VP of product wants to ship a feature that violates three of their design principles. Needs to articulate why this is a bad idea."
+  },
+  {
+    "id": "staff-angry-roast",
+    "skill_level": 6,
+    "emotion": "angry",
+    "emotion_intensity": 0.8,
+    "domain": "saas",
+    "question_type": "roast",
+    "context": "A junior shipped a component that breaks the entire design system's consistency. The PR got approved without design review. Wants to understand how bad it actually is."
+  },
+  {
+    "id": "beginner-hostile-how-to",
+    "skill_level": 0,
+    "emotion": "hostile",
+    "emotion_intensity": 0.9,
+    "domain": "landing_page",
+    "question_type": "how_to",
+    "context": "Non-designer founder who tried Canva and hated it. Thinks design tools are deliberately confusing. Resents needing help."
+  },
+  {
+    "id": "hobbyist-ecstatic-comparison",
+    "skill_level": 1,
+    "emotion": "ecstatic",
+    "emotion_intensity": 1.0,
+    "domain": "social",
+    "question_type": "comparison",
+    "context": "Just discovered that their favorite app uses a design pattern they accidentally used too. Thrilled and wants to explore it deeper."
+  },
+  {
+    "id": "bootcamp-defeated-how-to",
+    "skill_level": 2,
+    "emotion": "defeated",
+    "emotion_intensity": 0.9,
+    "domain": "ecommerce",
+    "question_type": "how_to",
+    "context": "Failed their first bootcamp project. Feedback said their visual hierarchy was 'nonexistent.' Doesn't even know what that means properly."
+  },
+  {
+    "id": "mid-anxious-fintech",
+    "skill_level": 4,
+    "emotion": "anxious",
+    "emotion_intensity": 0.9,
+    "domain": "fintech",
+    "question_type": "critique",
+    "context": "Designing a trading interface that handles real money. Terrified of making a UX mistake that causes users to lose money."
+  },
+  {
+    "id": "senior-defeated-landing",
+    "skill_level": 5,
+    "emotion": "defeated",
+    "emotion_intensity": 0.6,
+    "domain": "landing_page",
+    "question_type": "critique",
+    "context": "A/B tested 8 landing page variants over 3 months. None beat the ugly original that the founder made in 2019. Questioning everything."
+  },
+  {
+    "id": "staff-ecstatic-mobile",
+    "skill_level": 6,
+    "emotion": "ecstatic",
+    "emotion_intensity": 0.7,
+    "domain": "mobile",
+    "question_type": "best_practice",
+    "context": "Just saw Apple's latest HIG updates and they align perfectly with an approach they've been advocating internally for a year. Vindicated and energized."
+  },
+  {
+    "id": "junior-neutral-ecommerce",
+    "skill_level": 3,
+    "emotion": "neutral",
+    "emotion_intensity": 0.2,
+    "domain": "ecommerce",
+    "question_type": "best_practice",
+    "context": "Working on product cards for an ecommerce site. Wants to understand what makes a high-converting product card layout."
+  },
+  {
+    "id": "beginner-frustrated-social",
+    "skill_level": 0,
+    "emotion": "frustrated",
+    "emotion_intensity": 0.8,
+    "domain": "social",
+    "question_type": "how_to",
+    "context": "Trying to design a profile page and can't get the layout to look right no matter what they do. Everything looks 'cheap'."
+  },
+  {
+    "id": "hobbyist-angry-portfolio",
+    "skill_level": 1,
+    "emotion": "angry",
+    "emotion_intensity": 0.7,
+    "domain": "portfolio",
+    "question_type": "roast",
+    "context": "Spent 2 weeks on a portfolio site and a friend said it looks like a 'default template.' Wants to know if that's true."
+  },
+  {
+    "id": "mid-enthusiastic-healthcare",
+    "skill_level": 4,
+    "emotion": "enthusiastic",
+    "emotion_intensity": 0.7,
+    "domain": "healthcare",
+    "question_type": "how_to",
+    "context": "First time designing for healthcare. Excited about the accessibility challenges and wants to learn the domain's unique constraints."
+  },
+  {
+    "id": "senior-anxious-design-system",
+    "skill_level": 5,
+    "emotion": "anxious",
+    "emotion_intensity": 0.6,
+    "domain": "design_system",
+    "question_type": "tradeoff",
+    "context": "About to propose deprecating half the components in the design system. Knows it's the right call but nervous about the political fallout."
+  }
+]

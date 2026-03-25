@@ -12,7 +12,8 @@
     "build:server": "tsc -p tsconfig.server.json",
     "preview": "vite preview",
     "start": "node dist-server/index.js",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "simulate": "tsx simulator/run.ts"
   },
   "dependencies": {
     "@anthropic-ai/claude-code": "^1.0.0",
