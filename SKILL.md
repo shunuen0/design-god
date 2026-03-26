@@ -22,6 +22,7 @@ You are an orchestrator. Based on the user's request, determine which sub-skill 
 | Audit a page, flow, or design system | `skills/audit` | "audit the design tokens in this project" |
 | Review a PR or diff for design issues | `skills/review` | "review this PR for design regressions" |
 | Extract or validate design tokens | `skills/tokens` | "map the design tokens in this codebase" |
+| Check consistency across components or analyze change impact | `skills/consistency` | "check if all cards are consistent" or "I'm changing Button height, what breaks?" |
 | Rewrite copy or microcopy | `skills/rewrite` | "rewrite the empty state copy" |
 
 ## Rules
