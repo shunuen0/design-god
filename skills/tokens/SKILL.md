@@ -38,15 +38,21 @@ Scan the codebase and build a map of the project's design system. Then identify 
 
 ## Output Format
 
+All actionable items are numbered sequentially across the entire response so the user can say "implement 1, 4, and 7."
+
 **Token Map**
-- List each token category with its values (spacing, color, type, etc.)
+List each token category with its values (spacing, color, type, etc.). This section is informational, not numbered.
 
 **Issues**
-- Ranked inconsistencies: name the file, line, and what's wrong
-- "src/components/Card.tsx:42 uses `padding: 13px` — nearest token is `--space-3: 12px` or `--space-4: 16px`"
+
+1. `src/components/Card.tsx:42` uses `padding: 13px` — nearest token is `--space-3: 12px` or `--space-4: 16px`
+2. [next inconsistency]
+3. ...
 
 **Quick Wins**
-- Consolidation opportunities: "7 unique grays in use, 3 are within 2% lightness — consolidate to 5"
+
+4. 7 unique grays in use, 3 are within 2% lightness — consolidate to 5
+5. ...
 
 ## Example
 

@@ -37,15 +37,22 @@ Audit a page, user flow, or full design system. This is broader and more systema
 
 ## Output Format
 
+All actionable items are numbered sequentially across the entire response so the user can say "implement 1, 4, and 7."
+
 **Summary**
-- 2–3 sentence overall assessment. Be direct.
+2–3 sentence overall assessment. Be direct. Not numbered — this is informational.
 
 **Issues**
-- Ranked by impact, grouped by domain if there are many
-- Each names the specific element, file, and fix
+
+1. [highest impact — element, file, fix]
+2. [next issue]
+3. ...
 
 **Quick Wins**
-- The 3 highest-leverage changes
+
+4. [continues numbering — highest-leverage changes]
+5. ...
 
 **Consider**
-- One systemic observation about the design system's direction or scalability
+
+6. [systemic observation, optional]

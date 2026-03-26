@@ -1,6 +1,6 @@
 ---
 name: design-god-design-engineering
-description: Design engineering skill for UI polish, animation decisions, component craft, and the invisible details that make software feel great. Based on Emil Kowalski's philosophy. Use when reviewing or building interactive components, animations, transitions, and micro-interactions.
+description: Design engineering skill for UI polish, animation decisions, component craft, and the invisible details that make software feel great. Use when reviewing or building interactive components, animations, transitions, and micro-interactions.
 ---
 
 # Design Engineering

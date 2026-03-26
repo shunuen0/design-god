@@ -37,15 +37,21 @@ Review changed files in a PR or git diff, focusing exclusively on design quality
 
 ## Output Format
 
+All actionable items are numbered sequentially across the entire response so the user can say "implement 1, 4, and 7."
+
 **Design Issues**
-- Ranked by severity; each names the file, line, what's wrong, and the fix
-- "src/Button.tsx:28 — new variant uses `#3b82f6` directly instead of `var(--accent)`. Use the token."
+
+1. `src/Button.tsx:28` — new variant uses `#3b82f6` directly instead of `var(--accent)`. Use the token.
+2. [next issue]
+3. ...
 
 **Looks Good**
-- Briefly note any design improvements in the PR (optional, only if genuinely good)
+Briefly note any design improvements in the PR (optional, only if genuinely good). Not numbered — this is informational.
 
 **Quick Wins**
-- Opportunities to improve the design while the code is being touched anyway
+
+4. [continues numbering — opportunities to improve while the code is being touched]
+5. ...
 
 ## Example
 

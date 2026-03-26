@@ -33,15 +33,27 @@ Given a screenshot, mockup, or component description, deliver a sharp critique c
 
 ## Output Format
 
-Use the standard sections from `formatting.md`:
-- **Issues** — ranked by impact, specific element + problem + fix
-- **Quick Wins** — 1–3 immediate improvements
-- **Consider** — one systemic note (optional)
+All actionable items are numbered sequentially across the entire response so the user can say "implement 1, 4, and 7."
 
-If the user also asks for copy feedback, include **Rewrites**.
+**Issues**
+
+1. [highest impact issue — element, problem, fix]
+2. [next issue]
+3. ...
+
+**Quick Wins**
+
+4. [continues numbering]
+5. ...
+
+**Consider**
+
+6. [systemic note, optional]
+
+If the user also asks for copy feedback, include **Rewrites** with numbered variants.
 
 ## Examples
 
 User: "critique this signup form" (with screenshot)
 
-Response starts directly with Issues, names specific elements ("the email label is 12px regular weight competing with the 14px placeholder — flip the hierarchy"), gives exact fixes.
+Response starts directly with Issues, names specific elements ("1. The email label is 12px regular weight competing with the 14px placeholder — flip the hierarchy"), gives exact fixes. User can then say "implement 1 and 3."

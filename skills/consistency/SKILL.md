@@ -74,12 +74,16 @@ When a shared component is being changed, find every consumer and evaluate wheth
 | ... | ... | ... |
 
 **Deviations**
-- `src/components/PricingCard.tsx:14` — padding is `20px`, canonical is `16px`. Likely intentional (pricing context) or oversight.
-- `src/views/Settings.tsx:88` — border-radius is `4px`, canonical is `8px`. Looks like a miss.
+
+1. `src/components/PricingCard.tsx:14` — padding is `20px`, canonical is `16px`. Likely intentional (pricing context) or oversight.
+2. `src/views/Settings.tsx:88` — border-radius is `4px`, canonical is `8px`. Looks like a miss.
 
 **Quick Wins**
-- Consolidate the 2 outlier cards to match the canonical `16px` padding
-- Extract shared card styles into a base component or shared class
+
+3. Consolidate the 2 outlier cards to match the canonical `16px` padding
+4. Extract shared card styles into a base component or shared class
+
+All items are numbered sequentially so the user can say "implement 1 and 3."
 
 ### Impact Analysis
 

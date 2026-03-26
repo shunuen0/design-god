@@ -25,18 +25,20 @@ Rewrite UI copy to be clearer, more compelling, and better aligned with the user
 
 ## Output Format
 
+All variants are numbered sequentially across the entire response so the user can say "implement 1, 4, and 7."
+
 **Rewrites**
 
-Group by UI element. Bold the element name on its own line, then each variant as a list item:
+Group by UI element. Bold the element name on its own line, then each variant as a numbered item:
 
 **Page headline**
-- "Start building in minutes" — action-oriented, speed
-- "The toolkit your team actually uses" — social proof angle
-- "Ship faster without the overhead" — pain-point framing
+1. "Start building in minutes" — action-oriented, speed
+2. "The toolkit your team actually uses" — social proof angle
+3. "Ship faster without the overhead" — pain-point framing
 
 **Empty state**
-- "No projects yet. Create your first one." — direct, minimal
-- "This is where your projects live. Start one?" — spatial, inviting
+4. "No projects yet. Create your first one." — direct, minimal
+5. "This is where your projects live. Start one?" — spatial, inviting
 
 ## Rules
 
