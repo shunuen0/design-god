@@ -1115,8 +1115,9 @@ html.dark .skill-badge.local {
   line-height: 1.55;
   white-space: pre-wrap;
   color: var(--fg);
-  resize: vertical;
-  min-height: 80px;
+  resize: none;
+  field-sizing: content;
+  overflow: hidden;
   outline: none;
   appearance: none;
   transition: border-color 0.15s;

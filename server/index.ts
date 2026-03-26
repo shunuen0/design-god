@@ -805,6 +805,14 @@ app.post("/api/preview", async (req, res) => {
   }
 });
 
+const distPath = path.resolve(import.meta.dirname ?? ".", "..", "dist");
+if (fs.existsSync(distPath)) {
+  app.use(express.static(distPath));
+  app.get("*", (_req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
+}
+
 (async () => {
   const judgmentApiKey = process.env.JUDGMENT_API_KEY?.trim();
   const judgmentOrgId = process.env.JUDGMENT_ORG_ID?.trim();
