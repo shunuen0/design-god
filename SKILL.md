@@ -23,6 +23,7 @@ You are an orchestrator. Based on the user's request, determine which sub-skill 
 | Review a PR or diff for design issues | `skills/review` | "review this PR for design regressions" |
 | Extract or validate design tokens | `skills/tokens` | "map the design tokens in this codebase" |
 | Check consistency across components or analyze change impact | `skills/consistency` | "check if all cards are consistent" or "I'm changing Button height, what breaks?" |
+| Animation, transitions, micro-interactions, UI polish | `skills/design_engineering` | "review the animations in this component" or "add an entrance animation to this modal" |
 | Rewrite copy or microcopy | `skills/rewrite` | "rewrite the empty state copy" |
 
 ## Rules
