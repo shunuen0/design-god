@@ -87,7 +87,7 @@ export async function runSimulation(
   maxTurns: number
 ): Promise<SimulationTrace> {
   const simulator = new RequesterSimulator(profile, maxTurns);
-  const sessionId = `sim-${profile.id}-${Date.now()}`;
+  const sessionId = `sim-${profile.id}-${Date.now()}-${crypto.randomUUID()}`;
   const turns: ConversationTurn[] = [];
   const chatMessages: Array<{ id: string; role: "user" | "assistant"; text: string; createdAt: string }> = [];
   const startedAt = new Date().toISOString();

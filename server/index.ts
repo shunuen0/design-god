@@ -1,9 +1,9 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
-import { ROOT_CONTEXT, SpanStatusCode, trace, type Context, type Span } from "@opentelemetry/api";
+import { SpanStatusCode } from "@opentelemetry/api";
 import { query, type SDKMessage, type SDKResultMessage, type SDKUserMessage } from "@anthropic-ai/claude-code";
-import { JudgmentTracerProvider, Tracer } from "judgeval";
+import { Tracer } from "judgeval";
 import OpenAI from "openai";
 import { z } from "zod";
 import path from "node:path";
@@ -15,11 +15,34 @@ const OPENAI_MODELS = new Set(["gpt-4o", "gpt-4o-mini", "gpt-5.4", "gpt-5.4-mini
 const app = express();
 const port = Number(process.env.PORT ?? 8787);
 const claudeHome = path.join(process.cwd(), ".claude-home");
-const judgmentProjectName = "design-god";
+const judgmentProjectName = process.env.JUDGMENT_PROJECT_NAME?.trim() || "design-god";
 const chatSessionTimeoutMs = Number(process.env.DESIGN_GOD_SESSION_TIMEOUT_MS ?? 30 * 60 * 1000);
 let judgmentTracer: Tracer | null = null;
 
 fs.mkdirSync(claudeHome, { recursive: true });
+
+function resolveClaudeCodeNodeBin() {
+  const explicitNode = process.env.CLAUDE_CODE_NODE_BIN?.trim();
+  if (explicitNode) return path.dirname(explicitNode);
+
+  const nodeMajor = Number(process.versions.node.split(".")[0] ?? 0);
+  const bundledNode = path.join(
+    process.env.HOME ?? "",
+    ".cache",
+    "codex-runtimes",
+    "codex-primary-runtime",
+    "dependencies",
+    "node",
+    "bin",
+    "node"
+  );
+
+  if (nodeMajor >= 26 && fs.existsSync(bundledNode)) {
+    return path.dirname(bundledNode);
+  }
+
+  return undefined;
+}
 
 app.use(cors());
 app.use(express.json({ limit: "15mb" }));
@@ -56,8 +79,6 @@ const endSessionSchema = z.object({
 
 type ChatTraceSession = {
   sessionId: string;
-  rootSpan: Span;
-  rootContext: Context;
   createdAt: string;
   createdAtMs: number;
   lastActivityAt: number;
@@ -171,6 +192,28 @@ function buildCodeContextTraceAttributes(codeContext: ResolvedRepoContext) {
   };
 }
 
+function buildChatTraceInput(
+  messages: z.infer<typeof requestSchema>["messages"],
+  promptSystem: string,
+  codeContext: ResolvedRepoContext
+) {
+  return {
+    format: "chat_conversation",
+    messages: [
+      { role: "system", content: promptSystem },
+      ...buildConversationMessages(messages),
+    ],
+    code_context:
+      codeContext.enabled
+        ? {
+            reference_count: codeContext.referenceCount,
+            global_style_count: codeContext.globalStyleCount,
+            repo_roots: codeContext.repoRoots,
+          }
+        : undefined,
+  };
+}
+
 function buildAssistantMessage(text: string, toolCalls: Array<{ name?: string; input?: unknown }>) {
   return {
     role: "assistant",
@@ -262,47 +305,8 @@ function annotateCurrentSpanError(error: unknown, extras?: Record<string, unknow
   span.setStatus({ code: SpanStatusCode.ERROR, message });
 }
 
-function serializeForSpan(value: unknown) {
-  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
-    return value;
-  }
-
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function setSpanAttribute(span: Span, key: string, value: unknown) {
-  if (value == null) return;
-  span.setAttribute(key, serializeForSpan(value));
-}
-
-function setSpanAttributes(span: Span, attributes: Record<string, unknown>) {
-  for (const [key, value] of Object.entries(attributes)) {
-    setSpanAttribute(span, key, value);
-  }
-}
-
-function setSessionSpanMetadata(session: ChatTraceSession, input?: unknown, output?: unknown, extras?: Record<string, unknown>) {
-  setSpanAttribute(session.rootSpan, "judgment.span_kind", "function");
-  setSpanAttribute(session.rootSpan, "judgment.session_id", session.sessionId);
-  setSpanAttribute(session.rootSpan, "chat_session_id", session.sessionId);
-  if (input !== undefined) setSpanAttribute(session.rootSpan, "judgment.input", input);
-  if (output !== undefined) setSpanAttribute(session.rootSpan, "judgment.output", output);
-  if (extras) setSpanAttributes(session.rootSpan, extras);
-}
-
-function runWithSessionSpan<T>(session: ChatTraceSession, fn: () => T): T {
-  return JudgmentTracerProvider.getInstance().useSpan(session.rootSpan, false, true, true, fn);
-}
-
-function emitSessionPartial(session: ChatTraceSession) {
-  if (!judgmentTracer) return;
-  runWithSessionSpan(session, () => {
-    judgmentTracer?.getSpanProcessor().emitPartial();
-  });
+function emitCurrentSpanPartial() {
+  judgmentTracer?.getSpanProcessor().emitPartial();
 }
 
 function scheduleSessionExpiry(session: ChatTraceSession) {
@@ -313,12 +317,9 @@ function scheduleSessionExpiry(session: ChatTraceSession) {
 }
 
 function createChatTraceSession(sessionId: string, userText: string, messageCount: number): ChatTraceSession {
-  const rootSpan = Tracer.getOTELTracer().startSpan("run_session");
   const createdAt = new Date().toISOString();
   const session: ChatTraceSession = {
     sessionId,
-    rootSpan,
-    rootContext: trace.setSpan(ROOT_CONTEXT, rootSpan),
     createdAt,
     createdAtMs: Date.now(),
     lastActivityAt: Date.now(),
@@ -327,26 +328,7 @@ function createChatTraceSession(sessionId: string, userText: string, messageCoun
     turnCount: 0
   };
 
-  setSessionSpanMetadata(
-    session,
-    {
-      session_id: sessionId,
-      started_at: createdAt,
-      initial_user_text: userText,
-      initial_message_count: messageCount
-    },
-    undefined,
-    {
-      chat_session_id: sessionId,
-      session_status: "active",
-      turn_count: 0,
-      message_count: messageCount,
-      started_at: createdAt
-    }
-  );
-
   chatTraceSessions.set(sessionId, session);
-  emitSessionPartial(session);
   scheduleSessionExpiry(session);
   return session;
 }
@@ -357,56 +339,14 @@ function getOrCreateChatTraceSession(sessionId: string, userText: string, messag
   return createChatTraceSession(sessionId, userText, messageCount);
 }
 
-function beginChatTraceTurn(session: ChatTraceSession, userText: string, messageCount: number, hasImages: boolean) {
+function beginChatTraceTurn(session: ChatTraceSession, userText: string, messageCount: number) {
   session.lastActivityAt = Date.now();
   session.lastUserText = userText;
   session.lastMessageCount = messageCount;
   session.turnCount += 1;
   scheduleSessionExpiry(session);
 
-  setSessionSpanMetadata(session, undefined, undefined, {
-      chat_session_id: session.sessionId,
-      session_status: "active",
-      turn_count: session.turnCount,
-      message_count: messageCount,
-      last_activity_at: new Date(session.lastActivityAt).toISOString(),
-      last_user_text: userText,
-      last_turn_has_images: hasImages
-  });
-  emitSessionPartial(session);
-
   return session.turnCount;
-}
-
-function updateSessionConversationSnapshot(
-  session: ChatTraceSession,
-  messages: z.infer<typeof requestSchema>["messages"],
-  latestAssistantText?: string,
-  promptSystem = systemPrompt
-) {
-  const transcript = [
-    { role: "system", content: promptSystem },
-    ...buildConversationMessages(messages),
-    ...(latestAssistantText ? [{ role: "assistant", content: latestAssistantText }] : []),
-  ];
-
-  setSessionSpanMetadata(
-    session,
-    {
-      format: "chat_conversation",
-      messages: transcript,
-    },
-    latestAssistantText
-      ? {
-          format: "chat_conversation",
-          messages: transcript,
-        }
-      : undefined,
-    {
-      conversation_message_count: transcript.length,
-    }
-  );
-  emitSessionPartial(session);
 }
 
 async function closeChatTraceSession(sessionId: string, reason = "completed") {
@@ -415,31 +355,6 @@ async function closeChatTraceSession(sessionId: string, reason = "completed") {
 
   chatTraceSessions.delete(sessionId);
   if (session.timeoutHandle) clearTimeout(session.timeoutHandle);
-
-  runWithSessionSpan(session, () => {
-    setSessionSpanMetadata(
-      session,
-      undefined,
-      {
-        session_id: session.sessionId,
-        close_reason: reason,
-        total_turns: session.turnCount,
-        last_user_text: session.lastUserText,
-        last_message_count: session.lastMessageCount,
-        duration_ms: Date.now() - session.createdAtMs
-      },
-      {
-        chat_session_id: session.sessionId,
-        session_status: "ended",
-        close_reason: reason,
-        turn_count: session.turnCount,
-        message_count: session.lastMessageCount,
-        last_activity_at: new Date(session.lastActivityAt).toISOString(),
-        ended_at: new Date().toISOString()
-      }
-    );
-    session.rootSpan.end();
-  });
 
   await Tracer.forceFlush().catch(() => {});
 }
@@ -512,30 +427,48 @@ async function runOpenAIChat(
     })
   ];
 
-  const stream = openai.responses.stream({
-    model,
-    instructions,
-    input,
-    tools: [{ type: "web_search_preview" }],
-  });
+  const runOpenAIResponse = Tracer.observe(async function openaiResponseStream(): Promise<string> {
+    const tools = [{ type: "web_search_preview" as const }];
+    Tracer.setInput({
+      format: "chat_conversation",
+      instructions,
+      input,
+      tools,
+    });
+    Tracer.recordLLMMetadata({ provider: "openai", model });
 
-  let fullText = "";
-  let searchId: string | null = null;
+    const stream = openai.responses.stream({
+      model,
+      instructions,
+      input,
+      tools,
+    });
 
-  for await (const event of stream) {
-    if (event.type === "response.output_item.added" && event.item.type === "web_search_call") {
-      searchId = event.item.id;
-      emit("tool_use", { id: searchId, name: "WebSearch", summary: "Searching the web…" });
-      emit("phase", { label: "Searching…" });
-    } else if (event.type === "response.web_search_call.completed" && searchId) {
-      emit("tool_result", { id: searchId, summary: "Results found" });
-      emit("phase", { label: "Responding…" });
-    } else if (event.type === "response.output_text.delta") {
-      fullText += event.delta;
+    let fullText = "";
+    let searchId: string | null = null;
+
+    for await (const event of stream) {
+      if (event.type === "response.output_item.added" && event.item.type === "web_search_call") {
+        searchId = event.item.id;
+        emit("tool_use", { id: searchId, name: "WebSearch", summary: "Searching the web…" });
+        emit("phase", { label: "Searching…" });
+      } else if (event.type === "response.web_search_call.completed" && searchId) {
+        await Tracer.observe(async function openaiWebSearch() {
+          Tracer.setInput({ name: "WebSearch" });
+          Tracer.setOutput("Results found");
+        }, "tool")();
+        emit("tool_result", { id: searchId, summary: "Results found" });
+        emit("phase", { label: "Responding…" });
+      } else if (event.type === "response.output_text.delta") {
+        fullText += event.delta;
+      }
     }
-  }
 
-  return fullText;
+    Tracer.setOutput(fullText);
+    return fullText;
+  }, "llm");
+
+  return runOpenAIResponse();
 }
 
 app.post("/api/chat", async (req, res) => {
@@ -552,20 +485,10 @@ app.post("/api/chat", async (req, res) => {
     const { messages, sessionId, model: requestedModel } = requestSchema.parse(req.body);
     const model = requestedModel ?? "claude-sonnet-4-6";
     const isOpenAI = OPENAI_MODELS.has(model);
+    const provider = isOpenAI ? "openai" : "anthropic";
     const codeContext = resolveRepoContext(messages);
     const codeTraceAttributes = buildCodeContextTraceAttributes(codeContext);
     const systemForTurn = buildSystemPrompt(codeContext);
-
-    if (isOpenAI && !process.env.OPENAI_API_KEY) {
-      emit("error", { message: "OPENAI_API_KEY is not set." });
-      res.end();
-      return;
-    }
-    if (!isOpenAI && !process.env.ANTHROPIC_API_KEY) {
-      emit("error", { message: "ANTHROPIC_API_KEY is not set." });
-      res.end();
-      return;
-    }
 
     const latest = [...messages].reverse().find((m) => m.role === "user");
     if (!latest) {
@@ -575,111 +498,161 @@ app.post("/api/chat", async (req, res) => {
     }
 
     const hasImages = (latest.imageDataUrls?.length ?? 0) > 0;
-    emit("phase", { label: hasImages ? "Analyzing image…" : codeContext.enabled ? "Inspecting code…" : "Thinking…" });
-
-    if (isOpenAI) {
-      const text = await runOpenAIChat(model, messages, emit, codeContext);
-      emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
-      res.end();
-      return;
-    }
-
-    const prompt = toPrompt(messages, codeContext);
-    const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
     const activeSessionId = sessionId ?? crypto.randomUUID();
     const traceSession = getOrCreateChatTraceSession(activeSessionId, latest.text ?? "", messages.length);
-    const turnIndex = beginChatTraceTurn(traceSession, latest.text ?? "", messages.length, hasImages);
-    runWithSessionSpan(traceSession, () => {
-      setSessionSpanMetadata(traceSession, undefined, undefined, codeTraceAttributes);
-    });
-    updateSessionConversationSnapshot(traceSession, messages, undefined, systemForTurn);
+    const turnIndex = beginChatTraceTurn(traceSession, latest.text ?? "", messages.length);
+    emit("phase", { label: hasImages ? "Analyzing image…" : codeContext.enabled ? "Inspecting code…" : "Thinking…" });
 
-    const text = await runWithSessionSpan(traceSession, async () => {
-      const runQuery = Tracer.observe(async function designGodRun(userText: string): Promise<string> {
-        // Judgment trace metadata — mirrors deep-research-agent's tracer.set_session_id / set_input / set_attributes pattern
-        Tracer.setSessionId(activeSessionId);
-        Tracer.setInput(userText);
+    const runChatTurn = Tracer.observe(async function chatTurn(userText: string): Promise<string> {
+      Tracer.setSessionId(activeSessionId);
+      Tracer.setInput(buildChatTraceInput(messages, systemForTurn, codeContext));
+      Tracer.setAttributes({
+        route: "/api/chat",
+        feature: "design-review-chat",
+        provider,
+        requested_model: model,
+        chat_session_id: activeSessionId,
+        session_created_at: traceSession.createdAt,
+        session_status: "active",
+        turn_index: turnIndex,
+        has_images: hasImages,
+        message_count: messages.length,
+        conversation_message_count: messages.length + 1,
+        ...codeTraceAttributes,
+      });
+      emitCurrentSpanPartial();
+
+      if (isOpenAI && !process.env.OPENAI_API_KEY) {
+        throw new Error("OPENAI_API_KEY is not set.");
+      }
+      if (!isOpenAI && !process.env.ANTHROPIC_API_KEY) {
+        throw new Error("ANTHROPIC_API_KEY is not set.");
+      }
+
+      if (isOpenAI) {
+        const openaiText = await runOpenAIChat(model, messages, emit, codeContext);
+        Tracer.setOutput({
+          format: "chat_conversation",
+          message: { role: "assistant", content: openaiText },
+        });
+        emitCurrentSpanPartial();
+        return openaiText;
+      }
+
+      const prompt = toPrompt(messages, codeContext);
+      const images = latest.imageDataUrls?.map(dataUrlParts) ?? [];
+      const runQuery = Tracer.observe(async function designGodAgentRun(userText: string): Promise<string> {
+        Tracer.setInput({
+          user_text: userText,
+          prompt,
+          has_images: hasImages,
+          allowed_tools: ["Skill", "WebSearch"],
+        });
         Tracer.setAttributes({
+          provider,
+          requested_model: model,
           chat_session_id: activeSessionId,
           turn_index: turnIndex,
-          has_images: hasImages,
-          message_count: messages.length,
-          ...codeTraceAttributes,
         });
 
         const sdkMessages: SDKMessage[] = [];
+        let claudeCodeStderr = "";
+        const claudeCodeNodeBin = resolveClaudeCodeNodeBin();
 
         // Track pending tool calls so we can pair them with their results
         const pendingTools = new Map<string, { name: string; input: unknown }>();
 
-        for await (const message of query({
-          prompt: images.length > 0 ? createUserMessageStream(prompt, activeSessionId, images) : prompt,
-          options: {
-            customSystemPrompt: systemForTurn,
-            allowedTools: ["Skill", "WebSearch"],
-            env: { ...process.env, HOME: claudeHome }
-          }
-        })) {
-          sdkMessages.push(message);
-
-          if (message.type === "assistant") {
-            type Block = { type: string; id?: string; name?: string; input?: unknown; text?: string };
-            const blocks = message.message.content as Block[];
-            const textContent = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("");
-            const toolUseBlocks = blocks.filter(b => b.type === "tool_use");
-
-            // One LLM span per assistant turn — explicitly set input/output for clarity
-            await Tracer.observe(async function llmTurn() {
-              const inputPayload = {
-                format: "chat_conversation",
-                system: systemForTurn,
-                messages: buildConversationMessages(messages),
-                tools: ["Skill", "WebSearch"],
-                code_context:
-                  codeContext.enabled
-                    ? {
-                        reference_count: codeContext.referenceCount,
-                        global_style_count: codeContext.globalStyleCount,
-                        repo_roots: codeContext.repoRoots,
-                      }
-                    : undefined,
-              };
-              const outputPayload = {
-                format: "chat_conversation",
-                message: buildAssistantMessage(textContent, toolUseBlocks),
-              };
-
-              Tracer.setInput(inputPayload);
-              Tracer.setOutput(outputPayload);
-              return outputPayload;
-            }, "llm")();
-
-            for (const block of blocks) {
-              if (block.type === "tool_use") {
-                pendingTools.set(block.id!, { name: block.name!, input: block.input });
-                emit("tool_use", { id: block.id, name: block.name, summary: summarizeInput(block.input) });
-              } else if (block.type === "text" && block.text?.trim()) {
-                emit("phase", { label: "Responding…" });
-              }
+        try {
+          for await (const message of query({
+            prompt: images.length > 0 ? createUserMessageStream(prompt, activeSessionId, images) : prompt,
+            options: {
+              model,
+              customSystemPrompt: systemForTurn,
+              allowedTools: ["Skill", "WebSearch"],
+              env: {
+                ...process.env,
+                HOME: claudeHome,
+                ...(claudeCodeNodeBin
+                  ? { PATH: `${claudeCodeNodeBin}:${process.env.PATH ?? ""}` }
+                  : {}),
+              },
+              stderr: (data) => {
+                claudeCodeStderr += data;
+              },
             }
-          } else if (message.type === "user") {
-            type ResultBlock = { type: string; tool_use_id?: string; content?: unknown };
-            for (const block of message.message.content as ResultBlock[]) {
-              if (block.type === "tool_result") {
-                const tool = pendingTools.get(block.tool_use_id!);
-                const result = extractToolResultText(block.content);
-                if (tool) {
-                  // One tool span per tool call — name+input → result
-                  await Tracer.observe(async function toolCall() {
-                    Tracer.setInput({ name: tool.name, input: tool.input });
-                    Tracer.setOutput(result);
-                  }, "tool")();
-                  pendingTools.delete(block.tool_use_id!);
+          })) {
+            sdkMessages.push(message);
+
+            if (message.type === "assistant") {
+              type Block = { type: string; id?: string; name?: string; input?: unknown; text?: string };
+              const blocks = message.message.content as Block[];
+              const textContent = blocks.filter(b => b.type === "text").map(b => b.text ?? "").join("");
+              const toolUseBlocks = blocks.filter(b => b.type === "tool_use");
+
+              // One LLM span per assistant turn — explicitly set input/output for clarity
+              await Tracer.observe(async function llmTurn() {
+                const inputPayload = {
+                  format: "chat_conversation",
+                  system: systemForTurn,
+                  messages: buildConversationMessages(messages),
+                  tools: ["Skill", "WebSearch"],
+                  code_context:
+                    codeContext.enabled
+                      ? {
+                          reference_count: codeContext.referenceCount,
+                          global_style_count: codeContext.globalStyleCount,
+                          repo_roots: codeContext.repoRoots,
+                        }
+                      : undefined,
+                };
+                const outputPayload = {
+                  format: "chat_conversation",
+                  message: buildAssistantMessage(textContent, toolUseBlocks),
+                };
+
+                Tracer.setInput(inputPayload);
+                Tracer.setOutput(outputPayload);
+                return outputPayload;
+              }, "llm")();
+
+              for (const block of blocks) {
+                if (block.type === "tool_use") {
+                  pendingTools.set(block.id!, { name: block.name!, input: block.input });
+                  emit("tool_use", { id: block.id, name: block.name, summary: summarizeInput(block.input) });
+                } else if (block.type === "text" && block.text?.trim()) {
+                  emit("phase", { label: "Responding…" });
                 }
-                emit("tool_result", { id: block.tool_use_id, summary: result.slice(0, 80) });
+              }
+            } else if (message.type === "user") {
+              type ResultBlock = { type: string; tool_use_id?: string; content?: unknown };
+              for (const block of message.message.content as ResultBlock[]) {
+                if (block.type === "tool_result") {
+                  const tool = pendingTools.get(block.tool_use_id!);
+                  const result = extractToolResultText(block.content);
+                  if (tool) {
+                    // One tool span per tool call — name+input → result
+                    await Tracer.observe(async function toolCall() {
+                      Tracer.setInput({ name: tool.name, input: tool.input });
+                      Tracer.setOutput(result);
+                    }, "tool")();
+                    pendingTools.delete(block.tool_use_id!);
+                  }
+                  emit("tool_result", { id: block.tool_use_id, summary: result.slice(0, 80) });
+                }
               }
             }
           }
+        } catch (error) {
+          if (claudeCodeStderr.trim() && error instanceof Error) {
+            const terminalResult = [...sdkMessages].reverse().find(
+              (m): m is SDKResultMessage => m.type === "result"
+            );
+            const detail = terminalResult?.is_error && "result" in terminalResult
+              ? terminalResult.result
+              : claudeCodeStderr.trim().split("\n").at(-1);
+            error.message = detail ? `${error.message}: ${detail}` : error.message;
+          }
+          throw error;
         }
 
         const terminalResult = [...sdkMessages].reverse().find(
@@ -701,14 +674,20 @@ app.post("/api/chat", async (req, res) => {
         const resultMsg = terminalResult?.subtype === "success" ? terminalResult : undefined;
         const finalText = (resultMsg?.result ?? extractText(sdkMessages)).trim();
 
-        // Explicit output on the root span for Judgment trace display
         Tracer.setOutput(finalText);
-        updateSessionConversationSnapshot(traceSession, messages, finalText, systemForTurn);
         return finalText;
       }, "function");
 
-      return await runQuery(latest.text ?? "");
-    });
+      const claudeText = await runQuery(latest.text ?? "");
+      Tracer.setOutput({
+        format: "chat_conversation",
+        message: { role: "assistant", content: claudeText },
+      });
+      emitCurrentSpanPartial();
+      return claudeText;
+    }, "function");
+
+    const text = await runChatTurn(latest.text ?? "");
     emit("done", { text, id: crypto.randomUUID(), createdAt: new Date().toISOString() });
   } catch (error) {
     annotateCurrentSpanError(error, {
@@ -838,7 +817,9 @@ if (fs.existsSync(distPath)) {
       judgmentTracer = tracer;
 
       if (tracer.projectId) {
-        console.log(`[tracing] Judgment tracing enabled for project "${tracer.projectName}" (${tracer.projectId})`);
+        console.log(
+          `[tracing] Judgment tracing enabled for project "${tracer.projectName}" (${tracer.projectId}) at ${tracer.apiUrl}`
+        );
       } else {
         console.warn(
           `[tracing] Judgment tracer initialized in no-op mode. Check project "${judgmentProjectName}" exists and credentials are valid.`
